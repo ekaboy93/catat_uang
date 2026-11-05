@@ -102,20 +102,20 @@
           <button type="button" data-act="type" data-type="Income" id="type-income" class="rounded-lg py-2 text-sm font-semibold">Masuk</button>
           <button type="button" data-act="type" data-type="Transfer" id="type-transfer" class="rounded-lg py-2 text-sm font-semibold">Transfer</button>
         </div>
-        <input id="f-nominal" type="number" inputmode="numeric" min="1" step="any" required placeholder="Nominal (Rp)" class="field">
-        <div class="grid grid-cols-2 gap-2">
-          <input id="f-category" list="cat-list" placeholder="Kategori" class="field">
-          <datalist id="cat-list"></datalist>
-          <datalist id="budget-cat-list"></datalist>
-          <select id="f-sumber" class="field" aria-label="Sumber dana">
-            <option value="Kas Harian">Dari Kas Harian</option>
-            <option value="Brankas Darurat">Dari Brankas Darurat</option>
-          </select>
+        <input id="f-nominal" type="text" inputmode="numeric" autocomplete="off" required placeholder="0" aria-label="Nominal" class="field money text-lg font-bold">
+        <div id="f-cat-wrap">
+          <p class="mb-1.5 text-xs font-semibold text-ink/60">Kategori</p>
+          <div id="f-chips" class="flex flex-wrap gap-1.5"></div>
+          <input id="f-cat-new" class="field mt-2 hidden" placeholder="Nama kategori baru" maxlength="30" aria-label="Kategori baru">
         </div>
-        <select id="f-tujuan" class="field hidden" aria-label="Tujuan transfer">
-          <option value="Kas Harian">Ke Kas Harian</option>
-          <option value="Brankas Darurat" selected>Ke Brankas Darurat</option>
-        </select>
+        <div>
+          <p id="f-fund-label" class="mb-1.5 text-xs font-semibold text-ink/60">Dibayar dari</p>
+          <div class="grid grid-cols-2 gap-1.5 rounded-xl bg-paper p-1">
+            <button type="button" data-act="fund" data-p="f" data-fund="Kas Harian" id="f-fund-kas">Kas Harian</button>
+            <button type="button" data-act="fund" data-p="f" data-fund="Brankas Darurat" id="f-fund-vault">Brankas Darurat</button>
+          </div>
+          <p id="f-transfer-note" class="mt-1.5 hidden text-xs text-ink/60"></p>
+        </div>
         <input id="f-desc" placeholder="Deskripsi (opsional)" class="field">
         <input id="f-date" type="date" required class="field">
         <button class="btn w-full" type="submit">Simpan transaksi</button>
@@ -162,7 +162,7 @@
           <option>Hutang</option>
         </select>
         <input id="hp-nama" required placeholder="Nama" class="field">
-        <input id="hp-nominal" type="number" inputmode="numeric" min="1" step="any" required placeholder="Nominal (Rp)" class="field">
+        <input id="hp-nominal" type="text" inputmode="numeric" autocomplete="off" required placeholder="Nominal" aria-label="Nominal" class="field money">
         <input id="hp-catatan" placeholder="Catatan (opsional)" class="field">
         <button class="btn w-full" type="submit">Simpan ke buku</button>
       </form>
@@ -208,7 +208,7 @@
       </div>
       <form id="living-form" class="card space-y-2">
         <label class="h-sec block" for="set-living">Biaya hidup per bulan</label>
-        <input id="set-living" type="number" inputmode="numeric" min="0" step="any" required class="field">
+        <input id="set-living" type="text" inputmode="numeric" autocomplete="off" required placeholder="0" class="field money">
         <button class="btn w-full" type="submit">Simpan biaya hidup</button>
       </form>
       <form id="emerg-form" class="card space-y-2">
@@ -219,10 +219,13 @@
       <div class="card">
         <p class="h-sec">Anggaran per kategori (bulanan)</p>
         <ul id="settings-budgets" class="mb-3"></ul>
-        <form id="budget-form" class="grid grid-cols-5 gap-2" autocomplete="off">
-          <input id="bud-kat" list="budget-cat-list" required placeholder="Kategori" class="field col-span-2">
-          <input id="bud-limit" type="number" inputmode="numeric" min="0" required placeholder="Batas (Rp)" class="field col-span-2">
-          <button class="btn !px-2" type="submit">Set</button>
+        <form id="budget-form" class="space-y-2" autocomplete="off">
+          <div id="b-chips" class="flex flex-wrap gap-1.5"></div>
+          <input id="b-cat-new" class="field hidden" placeholder="Nama kategori baru" maxlength="30" aria-label="Kategori baru">
+          <div class="grid grid-cols-3 gap-2">
+            <input id="bud-limit" type="text" inputmode="numeric" autocomplete="off" required placeholder="Batas bulanan" aria-label="Batas bulanan" class="field money col-span-2">
+            <button class="btn" type="submit">Simpan</button>
+          </div>
         </form>
         <p class="mt-1.5 text-[11px] text-ink/60">Isi batas 0 untuk menghapus anggaran.</p>
       </div>
@@ -232,7 +235,7 @@
         <form id="bill-form" class="space-y-2" autocomplete="off">
           <input id="bill-nama" required placeholder="Nama tagihan" class="field">
           <div class="grid grid-cols-2 gap-2">
-            <input id="bill-nominal" type="number" inputmode="numeric" min="1" step="any" required placeholder="Nominal" class="field">
+            <input id="bill-nominal" type="text" inputmode="numeric" autocomplete="off" required placeholder="Nominal" aria-label="Nominal" class="field money">
             <input id="bill-tgl" type="number" inputmode="numeric" min="1" max="31" required placeholder="Tgl jatuh tempo" class="field">
           </div>
           <button class="btn w-full" type="submit">Tambah tagihan</button>
@@ -252,16 +255,20 @@
       <h2 id="e-title" class="text-base font-extrabold">Edit transaksi</h2>
       <input type="hidden" id="e-id">
       <input id="e-date" type="date" required class="field" aria-label="Tanggal">
-      <input id="e-nominal" type="number" inputmode="numeric" min="1" step="any" required class="field" aria-label="Nominal">
-      <input id="e-category" list="cat-list" class="field" placeholder="Kategori" aria-label="Kategori">
-      <select id="e-sumber" class="field" aria-label="Sumber dana">
-        <option value="Kas Harian">Kas Harian</option>
-        <option value="Brankas Darurat">Brankas Darurat</option>
-      </select>
-      <select id="e-tujuan" class="field hidden" aria-label="Tujuan">
-        <option value="Kas Harian">Ke Kas Harian</option>
-        <option value="Brankas Darurat">Ke Brankas Darurat</option>
-      </select>
+      <input id="e-nominal" type="text" inputmode="numeric" autocomplete="off" required aria-label="Nominal" class="field money">
+      <div id="e-cat-wrap">
+        <p class="mb-1.5 text-xs font-semibold text-ink/60">Kategori</p>
+        <div id="e-chips" class="flex flex-wrap gap-1.5"></div>
+        <input id="e-cat-new" class="field mt-2 hidden" placeholder="Nama kategori baru" maxlength="30" aria-label="Kategori baru">
+      </div>
+      <div>
+        <p id="e-fund-label" class="mb-1.5 text-xs font-semibold text-ink/60">Sumber dana</p>
+        <div class="grid grid-cols-2 gap-1.5 rounded-xl bg-paper p-1">
+          <button type="button" data-act="fund" data-p="e" data-fund="Kas Harian" id="e-fund-kas">Kas Harian</button>
+          <button type="button" data-act="fund" data-p="e" data-fund="Brankas Darurat" id="e-fund-vault">Brankas Darurat</button>
+        </div>
+        <p id="e-transfer-note" class="mt-1.5 hidden text-xs text-ink/60"></p>
+      </div>
       <input id="e-desc" class="field" placeholder="Deskripsi" aria-label="Deskripsi">
       <div class="grid grid-cols-2 gap-2">
         <button type="button" data-act="close-edit" class="rounded-xl border border-mist bg-white px-4 py-2.5 text-sm font-semibold">Batal</button>

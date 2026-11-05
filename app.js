@@ -33,6 +33,36 @@ const hashStr = s => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(
 const newClientId = () => 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const otherFund = f => (f === FUND.KAS ? FUND.VAULT : FUND.KAS);
 
+/* ---- input nominal: pemisah ribuan otomatis (1.500.000) ---- */
+const fmtNum = n => (Number(n) > 0 ? Number(n).toLocaleString('id-ID') : '');
+const setMoney = (el, n) => { el.value = fmtNum(n); };
+function formatMoneyInput(el) {
+  const pos = el.selectionStart == null ? el.value.length : el.selectionStart;
+  const digitsBefore = el.value.slice(0, pos).replace(/\D/g, '').length;
+  const digits = el.value.replace(/\D/g, '').replace(/^0+(?=\d)/, '').slice(0, 12);
+  const out = digits ? Number(digits).toLocaleString('id-ID') : '';
+  el.value = out;
+  let p = 0, c = 0; // kembalikan posisi kursor setelah titik disisipkan
+  while (p < out.length && c < digitsBefore) { if (/\d/.test(out[p])) c++; p++; }
+  try { el.setSelectionRange(p, p); } catch (e) { /* abaikan */ }
+}
+function initMoneyInputs() { // beri awalan "Rp" pada setiap kolom nominal
+  $$('input.money').forEach(el => {
+    const w = document.createElement('div');
+    w.className = 'relative';
+    [...el.classList].filter(c => c.startsWith('col-span')).forEach(c => { el.classList.remove(c); w.classList.add(c); });
+    el.replaceWith(w);
+    w.appendChild(el);
+    const tag = document.createElement('span');
+    tag.textContent = 'Rp';
+    tag.className = 'pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-ink/50';
+    w.appendChild(tag);
+    el.classList.add('!pl-9');
+  });
+}
+document.addEventListener('input', e => { if (e.target.classList && e.target.classList.contains('money')) formatMoneyInput(e.target); });
+const cleanCat = v => { const t = String(v || '').replace(/\s+/g, ' ').trim(); return t.charAt(0).toUpperCase() + t.slice(1); };
+
 const isEarn = t => t.type === 'Income' && t.category !== NONEARN; // penghasilan sungguhan
 const isOut = t => t.type === 'Expense';
 function applyBal(b, t) { // dampak satu transaksi pada saldo tiap brankas
@@ -46,7 +76,8 @@ const getQueue = () => readJSON(STORE.QUEUE, []);
 const setQueue = q => localStorage.setItem(STORE.QUEUE, JSON.stringify(q));
 
 const emptyData = () => ({ transactions: [], hutang: [], bills: [], settings: {}, meta: { windowStart: '0000-00-00', opening: {} } });
-const state = { data: emptyData(), extra: {}, tab: 'beranda', type: 'Expense', statMonth: monthKey(new Date()) }; // extra: transaksi bulan lama yang dimuat on-demand
+const state = { data: emptyData(), extra: {}, tab: 'beranda', type: 'Expense', statMonth: monthKey(new Date()), fund: { f: FUND.KAS, e: FUND.KAS }, editType: null };
+const picker = { f: { cat: '', adding: false }, e: { cat: '', adding: false }, b: { cat: '', adding: false } }; // pilihan kategori (form, edit, anggaran) // extra: transaksi bulan lama yang dimuat on-demand
 
 const nTx = t => ({ ...t, nominal: Number(t.nominal) || 0, tujuan: t.tujuan || '', refId: t.refId || '', deskripsi: t.deskripsi || '' });
 const nHutang = h => ({ ...h, nominal: Number(h.nominal) || 0, terbayar: Number(h.terbayar) || 0 });
@@ -460,7 +491,7 @@ function renderBuku() {
 
 function renderSettings() {
   const set = (id, v) => { const el = $(id); if (document.activeElement !== el) el.value = v; };
-  set('#set-living', state.data.settings.MonthlyLivingCost || '');
+  set('#set-living', fmtNum(state.data.settings.MonthlyLivingCost));
   set('#set-emerg', state.data.settings.EmergencyMonths === '' || state.data.settings.EmergencyMonths == null ? 6 : state.data.settings.EmergencyMonths);
   $('#settings-bills').innerHTML = state.data.bills.length
     ? state.data.bills.map(b => `<li class="flex items-center justify-between border-b border-mist py-2.5 text-sm last:border-0">
@@ -483,12 +514,56 @@ function renderTabs() {
   $('#type-expense').className = cls('Expense', 'bg-rust');
   $('#type-income').className = cls('Income', 'bg-kas');
   $('#type-transfer').className = cls('Transfer', 'bg-vault');
-  const tr = state.type === 'Transfer';
-  $('#f-category').classList.toggle('hidden', tr);
-  $('#f-tujuan').classList.toggle('hidden', !tr);
-  $('#cat-list').innerHTML = (CATS[state.type] || []).map(c => `<option value="${esc(c)}">`).join('');
-  $('#budget-cat-list').innerHTML = CATS.Expense.map(c => `<option value="${esc(c)}">`).join('');
+  renderPickers();
 }
+
+/* ---- pemilih kategori (chip) & sumber dana (segmen) ---- */
+function catOptions(type) {
+  const seen = new Set(CATS[type] || []);
+  state.data.transactions.forEach(t => {
+    if (t.type === type && t.category && t.category !== 'Transfer' && !t.category.startsWith('Pelunasan ')) seen.add(t.category);
+  });
+  if (type === 'Expense') Object.keys(parseBudgets()).forEach(k => seen.add(k));
+  return [...seen];
+}
+function chipBtn(p, label, active, act, extra) {
+  return `<button type="button" data-act="${act}" data-p="${p}" ${extra || ''} aria-pressed="${active}" class="rounded-full border px-3 py-1.5 text-xs font-semibold transition ${active ? 'border-ink bg-ink text-white' : 'border-mist bg-white text-ink/70'}">${label}</button>`;
+}
+function renderChips(p, type) {
+  const st = picker[p];
+  $(`#${p}-chips`).innerHTML = catOptions(type).map(c => chipBtn(p, esc(c), !st.adding && st.cat === c, 'pick-cat', `data-cat="${esc(c)}"`)).join('')
+    + chipBtn(p, '+ Baru', st.adding, 'new-cat');
+  $(`#${p}-cat-new`).classList.toggle('hidden', !st.adding);
+}
+function renderFund(p) {
+  const cur = state.fund[p];
+  [['kas', FUND.KAS, 'bg-kas'], ['vault', FUND.VAULT, 'bg-vault']].forEach(([k, name, bg]) => {
+    const b = $(`#${p}-fund-${k}`);
+    b.className = 'rounded-lg py-2 text-sm font-semibold transition ' + (cur === name ? bg + ' text-white' : 'text-ink/60');
+    b.setAttribute('aria-pressed', String(cur === name));
+  });
+}
+function renderPickers() {
+  const tr = state.type === 'Transfer';
+  $('#f-cat-wrap').classList.toggle('hidden', tr);
+  if (!tr) renderChips('f', state.type);
+  renderChips('b', 'Expense');
+  renderFund('f');
+  renderFund('e');
+  $('#f-fund-label').textContent = tr ? 'Pindahkan dari' : state.type === 'Income' ? 'Masuk ke' : 'Dibayar dari';
+  const note = $('#f-transfer-note');
+  note.classList.toggle('hidden', !tr);
+  note.textContent = tr ? `Dipindahkan ke ${otherFund(state.fund.f)}` : '';
+  if (state.editType) {
+    const trE = state.editType === 'Transfer';
+    if (!trE) renderChips('e', state.editType);
+    const en = $('#e-transfer-note');
+    en.classList.toggle('hidden', !trE);
+    en.textContent = trE ? `Dipindahkan ke ${otherFund(state.fund.e)}` : '';
+  }
+}
+const pickedCat = p => (picker[p].adding ? cleanCat($(`#${p}-cat-new`).value) : picker[p].cat);
+const resetPicker = p => { picker[p] = { cat: '', adding: false }; $(`#${p}-cat-new`).value = ''; };
 
 function setTab(tab) {
   state.tab = tab;
@@ -537,18 +612,19 @@ function openEdit(id) {
   if (!t) return;
   if (t.pending) return toast('Transaksi ini masih menunggu sinkron.', 'error');
   const tr = t.type === 'Transfer', locked = String(t.category).startsWith('Pelunasan ');
+  state.editType = t.type;
+  picker.e = { cat: t.category, adding: false };
+  state.fund.e = t.sumber;
   $('#e-id').value = id;
   $('#e-title').textContent = 'Edit ' + (tr ? 'transfer' : t.type === 'Income' ? 'pemasukan' : 'pengeluaran');
   $('#e-date').value = t.tanggal;
-  $('#e-nominal').value = t.nominal;
+  setMoney($('#e-nominal'), t.nominal);
   $('#e-nominal').disabled = locked;
-  $('#e-category').value = t.category;
-  $('#e-category').disabled = locked;
-  $('#e-category').classList.toggle('hidden', tr);
-  $('#e-sumber').value = t.sumber;
-  $('#e-tujuan').value = t.tujuan || otherFund(t.sumber);
-  $('#e-tujuan').classList.toggle('hidden', !tr);
+  $('#e-cat-new').value = '';
+  $('#e-cat-wrap').classList.toggle('hidden', tr || locked);
+  $('#e-fund-label').textContent = tr ? 'Pindahkan dari' : 'Sumber dana';
   $('#e-desc').value = t.deskripsi || '';
+  renderPickers();
   show('#modal-edit');
 }
 
@@ -562,10 +638,13 @@ document.addEventListener('click', async e => {
   const id = el.dataset.id;
   switch (el.dataset.act) {
     case 'tab': setTab(el.dataset.tab); break;
-    case 'type': state.type = el.dataset.type; renderTabs(); break;
+    case 'type': state.type = el.dataset.type; resetPicker('f'); renderTabs(); break;
     case 'open-settings': show('#modal-settings'); break;
     case 'close-settings': hide('#modal-settings'); break;
-    case 'close-edit': hide('#modal-edit'); break;
+    case 'close-edit': state.editType = null; hide('#modal-edit'); break;
+    case 'pick-cat': picker[el.dataset.p] = { cat: el.dataset.cat, adding: false }; renderPickers(); break;
+    case 'new-cat': picker[el.dataset.p] = { cat: '', adding: true }; renderPickers(); $(`#${el.dataset.p}-cat-new`).focus(); break;
+    case 'fund': state.fund[el.dataset.p] = el.dataset.fund; renderPickers(); break;
     case 'disconnect':
       if (confirm('Putuskan koneksi? Data tetap aman di Google Sheet Anda. Antrean offline yang belum terkirim akan hilang.')) {
         localStorage.removeItem(STORE.CONN); localStorage.removeItem(STORE.QUEUE); location.reload();
@@ -582,11 +661,11 @@ document.addEventListener('click', async e => {
     case 'pay-bill': {
       const b = compute().billRows.find(x => x.id === id);
       if (!b) break;
-      const v = prompt(`Bayar ${b.nama}. Nominal (sisa ${rp(b.remaining)}):`, b.remaining);
+      const sumber = state.fund.f;
+      const v = prompt(`Bayar ${b.nama} dari ${sumber}. Nominal (sisa ${rp(b.remaining)}):`, b.remaining);
       if (v === null) break;
       const amt = parseRp(v);
       if (amt <= 0) { toast('Nominal tidak valid', 'error'); break; }
-      const sumber = $('#f-sumber').value;
       if (sumber === FUND.VAULT && !confirmVault(amt, 'Tagihan: ' + b.nama)) break;
       await mutate('addTransaction', { tanggal: dateStr(new Date()), type: 'Expense', category: 'Tagihan', nominal: amt, deskripsi: 'Tagihan: ' + b.nama, sumber, refId: b.id }, 'Tagihan dibayar dari ' + sumber);
       break;
@@ -634,46 +713,54 @@ document.addEventListener('click', async e => {
 
 ['#modal-settings', '#modal-edit'].forEach(sel => $(sel).addEventListener('click', e => { if (e.target.id === sel.slice(1)) hide(sel); }));
 
-$('#f-sumber').addEventListener('change', e => { $('#f-tujuan').value = otherFund(e.target.value); });
 
 $('#tx-form').addEventListener('submit', async e => {
   e.preventDefault();
-  const type = state.type, sumber = $('#f-sumber').value, tujuan = $('#f-tujuan').value;
-  const nominal = Number($('#f-nominal').value), desc = $('#f-desc').value.trim();
-  let category = $('#f-category').value.trim();
-  if (type === 'Transfer') {
-    if (sumber === tujuan) return toast('Sumber dan tujuan transfer harus berbeda', 'error');
-    category = 'Transfer';
-  } else if (!category) return toast('Kategori wajib diisi', 'error');
+  const type = state.type, sumber = state.fund.f;
+  const nominal = parseRp($('#f-nominal').value), desc = $('#f-desc').value.trim();
+  let category = 'Transfer';
+  if (type !== 'Transfer') {
+    category = pickedCat('f');
+    if (!category) return toast('Pilih kategori atau tulis kategori baru', 'error');
+  }
+  if (nominal <= 0) return toast('Nominal harus lebih dari 0', 'error');
   if (sumber === FUND.VAULT && type !== 'Income') {
     if (!desc) return toast('Isi alasan di kolom deskripsi untuk penarikan Brankas Darurat', 'error');
     if (!confirmVault(nominal, desc)) return;
   }
-  const ok = await mutate('addTransaction', { tanggal: $('#f-date').value, type, category, nominal, deskripsi: desc, sumber, tujuan: type === 'Transfer' ? tujuan : '' }, 'Transaksi tersimpan');
-  if (ok) { $('#f-nominal').value = ''; $('#f-desc').value = ''; $('#f-category').value = ''; }
+  const ok = await mutate('addTransaction', { tanggal: $('#f-date').value, type, category, nominal, deskripsi: desc, sumber, tujuan: type === 'Transfer' ? otherFund(sumber) : '' }, 'Transaksi tersimpan');
+  if (ok) { $('#f-nominal').value = ''; $('#f-desc').value = ''; resetPicker('f'); renderPickers(); }
 });
 
 $('#edit-form').addEventListener('submit', async e => {
   e.preventDefault();
+  const t = state.data.transactions.find(x => x.id === $('#e-id').value);
+  if (!t) return;
+  const catHidden = $('#e-cat-wrap').classList.contains('hidden');
+  const category = catHidden ? t.category : pickedCat('e');
+  if (!category) return toast('Pilih kategori atau tulis kategori baru', 'error');
+  const nominal = parseRp($('#e-nominal').value);
+  if (nominal <= 0) return toast('Nominal harus lebih dari 0', 'error');
+  const sumber = state.fund.e;
   const ok = await mutate('updateTransaction', {
-    id: $('#e-id').value, tanggal: $('#e-date').value, nominal: Number($('#e-nominal').value),
-    category: $('#e-category').value.trim(), sumber: $('#e-sumber').value, tujuan: $('#e-tujuan').value, deskripsi: $('#e-desc').value.trim()
+    id: t.id, tanggal: $('#e-date').value, nominal, category, sumber,
+    tujuan: t.type === 'Transfer' ? otherFund(sumber) : '', deskripsi: $('#e-desc').value.trim()
   }, 'Perubahan disimpan');
-  if (ok) hide('#modal-edit');
+  if (ok) { state.editType = null; hide('#modal-edit'); }
 });
 
 $('#hp-form').addEventListener('submit', async e => {
   e.preventDefault();
   const ok = await mutate('addHutang', {
     tanggal: dateStr(new Date()), tipe: $('#hp-tipe').value, nama: $('#hp-nama').value.trim(),
-    nominal: Number($('#hp-nominal').value), catatan: $('#hp-catatan').value.trim()
+    nominal: parseRp($('#hp-nominal').value), catatan: $('#hp-catatan').value.trim()
   }, 'Tersimpan di buku');
   if (ok) { $('#hp-nama').value = ''; $('#hp-nominal').value = ''; $('#hp-catatan').value = ''; }
 });
 
 $('#living-form').addEventListener('submit', async e => {
   e.preventDefault();
-  await mutate('saveSetting', { key: 'MonthlyLivingCost', value: Number($('#set-living').value) }, 'Biaya hidup disimpan');
+  await mutate('saveSetting', { key: 'MonthlyLivingCost', value: parseRp($('#set-living').value) }, 'Biaya hidup disimpan');
 });
 $('#emerg-form').addEventListener('submit', async e => {
   e.preventDefault();
@@ -681,15 +768,17 @@ $('#emerg-form').addEventListener('submit', async e => {
 });
 $('#budget-form').addEventListener('submit', async e => {
   e.preventDefault();
+  const kat = pickedCat('b');
+  if (!kat) return toast('Pilih kategori atau tulis kategori baru', 'error');
   const b = parseBudgets();
-  const kat = $('#bud-kat').value.trim(), lim = Number($('#bud-limit').value);
+  const lim = parseRp($('#bud-limit').value);
   if (lim > 0) b[kat] = lim; else delete b[kat];
-  const ok = await mutate('saveSetting', { key: 'Budgets', value: JSON.stringify(b) }, 'Anggaran disimpan');
-  if (ok) e.target.reset();
+  const ok = await mutate('saveSetting', { key: 'Budgets', value: JSON.stringify(b) }, lim > 0 ? 'Anggaran disimpan' : 'Anggaran dihapus');
+  if (ok) { $('#bud-limit').value = ''; resetPicker('b'); renderPickers(); }
 });
 $('#bill-form').addEventListener('submit', async e => {
   e.preventDefault();
-  const ok = await mutate('saveBill', { nama: $('#bill-nama').value.trim(), nominal: Number($('#bill-nominal').value), tgl: Number($('#bill-tgl').value) }, 'Tagihan ditambahkan');
+  const ok = await mutate('saveBill', { nama: $('#bill-nama').value.trim(), nominal: parseRp($('#bill-nominal').value), tgl: Number($('#bill-tgl').value) }, 'Tagihan ditambahkan');
   if (ok) e.target.reset();
 });
 
@@ -705,6 +794,7 @@ window.addEventListener('offline', () => $('#offline-banner').classList.remove('
 
 /* ================= INIT ================= */
 (function init() {
+  initMoneyInputs();
   $('#f-date').value = dateStr(new Date());
   const hash = location.hash.replace('#', '');
   if (TABS.includes(hash)) state.tab = hash;
