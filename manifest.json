@@ -1,0 +1,16 @@
+{
+  "name": "Dompet Fleksibel (Dua Brankas)",
+  "short_name": "Dompet",
+  "description": "Manajemen keuangan pribadi dengan Kas Harian dan Brankas Darurat",
+  "lang": "id",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#EEF2F4",
+  "theme_color": "#14262E",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
