@@ -1,5 +1,7 @@
 'use strict';
 
+window.__DOMPET_V = '4'; // dicek oleh index.html untuk mendeteksi app.js versi lama
+
 /* ================= KONSTANTA ================= */
 const STORE = { CONN: 'dompet.conn.v1', QUEUE: 'dompet.queue.v1', CACHE: 'dompet.cache.' };
 const FUND = { KAS: 'Kas Harian', VAULT: 'Brankas Darurat' };
@@ -316,7 +318,7 @@ function aggMonth(key) {
 /* ================= RENDER ================= */
 function render() {
   const c = compute();
-  $('#today-label').textContent = longDate(dateStr(new Date()));
+  $('#today-label').textContent = longDate(dateStr(new Date())) + ' \u00b7 v' + window.__DOMPET_V;
   renderBeranda(c);
   renderHistori();
   renderStatistik(c);
