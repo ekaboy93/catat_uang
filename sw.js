@@ -1,7 +1,7 @@
 'use strict';
 
-const CACHE = 'dompet-fleksibel-v5';
-const SHELL = ['./', './index.html', './app.js?v=6', './manifest.json', './icon.svg'];
+const CACHE = 'dompet-fleksibel-v6';
+const SHELL = ['./', './index.html', './app.js?v=7', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', event => {
   event.waitUntil(

@@ -1,6 +1,6 @@
 'use strict';
 
-window.__DOMPET_V = '6'; // dicek oleh index.html untuk mendeteksi app.js versi lama
+window.__DOMPET_V = '7'; // dicek oleh index.html untuk mendeteksi app.js versi lama
 
 /* ================= KONSTANTA ================= */
 const STORE = { CONN: 'dompet.conn.v1', QUEUE: 'dompet.queue.v1', CACHE: 'dompet.cache.' };
@@ -634,6 +634,18 @@ function confirmVault(nominal, alasan) {
   return confirm(`Tarik ${rp(nominal)} dari Brankas Darurat?\nAlasan: ${alasan}`);
 }
 
+/* ---- lembar catat transaksi (tombol mengambang) ---- */
+function openTx() {
+  if (!parseRp($('#f-nominal').value) && !pickedCat('f')) { // form masih kosong: mulai dari Keluar
+    state.type = 'Expense';
+    resetPicker('f');
+    renderTabs();
+  }
+  $('#f-date').value = $('#f-date').value || dateStr(new Date());
+  show('#modal-tx');
+  setTimeout(() => $('#f-nominal').focus(), 50);
+}
+
 /* ---- lembar pembayaran: bayar hutang/terima piutang, bayar tagihan, pindah dana ---- */
 let sheet = null;
 const sheetOut = () => sheet.mode !== 'hutang' || sheet.target.tipe === 'Hutang'; // uang keluar dari dompet?
@@ -706,6 +718,8 @@ document.addEventListener('click', async e => {
     case 'type': state.type = el.dataset.type; resetPicker('f'); renderTabs(); break;
     case 'open-settings': show('#modal-settings'); break;
     case 'close-settings': hide('#modal-settings'); break;
+    case 'open-tx': openTx(); break;
+    case 'close-tx': hide('#modal-tx'); break;
     case 'open-reset': $('#r-confirm').value = ''; $('#r-backup').checked = true; $('#r-all').checked = false; syncResetBtn(); show('#modal-reset'); break;
     case 'close-reset': hide('#modal-reset'); break;
     case 'close-edit': state.editType = null; hide('#modal-edit'); break;
@@ -755,7 +769,7 @@ document.addEventListener('click', async e => {
   }
 });
 
-['#modal-settings', '#modal-edit', '#modal-reset', '#modal-sheet'].forEach(sel => $(sel).addEventListener('click', e => { if (e.target.id === sel.slice(1)) hide(sel); }));
+['#modal-settings', '#modal-edit', '#modal-reset', '#modal-sheet', '#modal-tx'].forEach(sel => $(sel).addEventListener('click', e => { if (e.target.id === sel.slice(1)) hide(sel); }));
 
 
 $('#tx-form').addEventListener('submit', async e => {
@@ -773,7 +787,7 @@ $('#tx-form').addEventListener('submit', async e => {
     if (!confirmVault(nominal, desc)) return;
   }
   const ok = await mutate('addTransaction', { tanggal: $('#f-date').value, type, category, nominal, deskripsi: desc, sumber, tujuan: type === 'Transfer' ? otherFund(sumber) : '' }, 'Transaksi tersimpan');
-  if (ok) { $('#f-nominal').value = ''; $('#f-desc').value = ''; resetPicker('f'); renderPickers(); }
+  if (ok) { $('#f-nominal').value = ''; $('#f-desc').value = ''; resetPicker('f'); renderPickers(); hide('#modal-tx'); }
 });
 
 $('#edit-form').addEventListener('submit', async e => {
@@ -873,6 +887,13 @@ $('#stat-month').addEventListener('change', e => {
   state.statMonth = e.target.value;
   renderStatistik(compute());
   ensureStatData();
+});
+
+document.addEventListener('keydown', e => { // Esc menutup lembar yang sedang terbuka (paling atas dulu)
+  if (e.key !== 'Escape') return;
+  const order = [['#modal-reset'], ['#modal-sheet', () => { sheet = null; }], ['#modal-edit', () => { state.editType = null; }], ['#modal-tx'], ['#modal-settings']];
+  const top = order.find(([id]) => $(id).classList.contains('flex'));
+  if (top) { if (top[1]) top[1](); hide(top[0]); }
 });
 
 window.addEventListener('online', loadData);

@@ -101,31 +101,7 @@
         <p id="progress-text" class="mt-1.5 text-xs text-ink/60"></p>
       </div>
 
-      <form id="tx-form" class="card space-y-3" autocomplete="off">
-        <p class="h-sec">Catat transaksi</p>
-        <div class="grid grid-cols-3 gap-1.5 rounded-xl bg-paper p-1">
-          <button type="button" data-act="type" data-type="Expense" id="type-expense" class="rounded-lg py-2 text-sm font-semibold">Keluar</button>
-          <button type="button" data-act="type" data-type="Income" id="type-income" class="rounded-lg py-2 text-sm font-semibold">Masuk</button>
-          <button type="button" data-act="type" data-type="Transfer" id="type-transfer" class="rounded-lg py-2 text-sm font-semibold">Transfer</button>
-        </div>
-        <input id="f-nominal" type="text" inputmode="numeric" autocomplete="off" required placeholder="0" aria-label="Nominal" class="field money text-lg font-bold">
-        <div id="f-cat-wrap">
-          <p class="mb-1.5 text-xs font-semibold text-ink/60">Kategori</p>
-          <div id="f-chips" class="flex flex-wrap gap-1.5"></div>
-          <input id="f-cat-new" class="field mt-2 hidden" placeholder="Nama kategori baru" maxlength="30" aria-label="Kategori baru">
-        </div>
-        <div>
-          <p id="f-fund-label" class="mb-1.5 text-xs font-semibold text-ink/60">Dibayar dari</p>
-          <div class="grid grid-cols-2 gap-1.5 rounded-xl bg-paper p-1">
-            <button type="button" data-act="fund" data-p="f" data-fund="Kas Harian" id="f-fund-kas">Kas Harian</button>
-            <button type="button" data-act="fund" data-p="f" data-fund="Brankas Darurat" id="f-fund-vault">Brankas Darurat</button>
-          </div>
-          <p id="f-transfer-note" class="mt-1.5 hidden text-xs text-ink/60"></p>
-        </div>
-        <input id="f-desc" placeholder="Deskripsi (opsional)" class="field">
-        <input id="f-date" type="date" required class="field">
-        <button class="btn w-full" type="submit">Simpan transaksi</button>
-      </form>
+      
 
       <div class="card">
         <p class="h-sec">Sisa tagihan bulan ini</p>
@@ -177,6 +153,16 @@
         <ul id="hp-list"></ul>
       </div>
     </section>
+  </div>
+
+  <!-- ============ TOMBOL MENGAMBANG ============ -->
+  <div class="pointer-events-none fixed inset-x-0 z-30" style="bottom:calc(4.75rem + env(safe-area-inset-bottom))">
+    <div class="mx-auto flex max-w-md justify-end px-4">
+      <button data-act="open-tx" aria-label="Catat transaksi" class="pointer-events-auto flex items-center gap-2 rounded-full bg-kas px-5 py-3.5 text-sm font-bold text-white shadow-lg shadow-ink/30 transition active:scale-95">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        Catat
+      </button>
+    </div>
   </div>
 
   <!-- ============ NAVIGASI BAWAH ============ -->
@@ -280,6 +266,40 @@
     </form>
   </div>
 
+  <!-- ============ CATAT TRANSAKSI (dibuka dari tombol mengambang) ============ -->
+  <div id="modal-tx" class="fixed inset-0 z-50 hidden items-end bg-ink/50" role="dialog" aria-modal="true" aria-label="Catat transaksi">
+    <div class="mx-auto max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-paper p-4">
+      <form id="tx-form" class="space-y-3" autocomplete="off">
+        <div class="flex items-center justify-between">
+          <h2 class="text-base font-extrabold">Catat transaksi</h2>
+          <button type="button" data-act="close-tx" class="rounded-lg px-3 py-1.5 text-sm font-semibold text-ink/60">Tutup</button>
+        </div>
+        <div class="grid grid-cols-3 gap-1.5 rounded-xl bg-paper p-1">
+          <button type="button" data-act="type" data-type="Expense" id="type-expense" class="rounded-lg py-2 text-sm font-semibold">Keluar</button>
+          <button type="button" data-act="type" data-type="Income" id="type-income" class="rounded-lg py-2 text-sm font-semibold">Masuk</button>
+          <button type="button" data-act="type" data-type="Transfer" id="type-transfer" class="rounded-lg py-2 text-sm font-semibold">Transfer</button>
+        </div>
+        <input id="f-nominal" type="text" inputmode="numeric" autocomplete="off" required placeholder="0" aria-label="Nominal" class="field money text-lg font-bold">
+        <div id="f-cat-wrap">
+          <p class="mb-1.5 text-xs font-semibold text-ink/60">Kategori</p>
+          <div id="f-chips" class="flex flex-wrap gap-1.5"></div>
+          <input id="f-cat-new" class="field mt-2 hidden" placeholder="Nama kategori baru" maxlength="30" aria-label="Kategori baru">
+        </div>
+        <div>
+          <p id="f-fund-label" class="mb-1.5 text-xs font-semibold text-ink/60">Dibayar dari</p>
+          <div class="grid grid-cols-2 gap-1.5 rounded-xl bg-paper p-1">
+            <button type="button" data-act="fund" data-p="f" data-fund="Kas Harian" id="f-fund-kas">Kas Harian</button>
+            <button type="button" data-act="fund" data-p="f" data-fund="Brankas Darurat" id="f-fund-vault">Brankas Darurat</button>
+          </div>
+          <p id="f-transfer-note" class="mt-1.5 hidden text-xs text-ink/60"></p>
+        </div>
+        <input id="f-desc" placeholder="Deskripsi (opsional)" class="field">
+        <input id="f-date" type="date" required class="field">
+        <button class="btn w-full" type="submit">Simpan transaksi</button>
+      </form>
+    </div>
+  </div>
+
   <!-- ============ LEMBAR PEMBAYARAN / PINDAH DANA ============ -->
   <div id="modal-sheet" class="fixed inset-0 z-50 hidden items-end bg-ink/50" role="dialog" aria-modal="true" aria-label="Pembayaran">
     <form id="sheet-form" class="mx-auto w-full max-w-md space-y-3 rounded-t-3xl bg-paper p-4" autocomplete="off">
@@ -352,10 +372,10 @@
       if (f) { f.textContent = 'Terjadi kesalahan: ' + e.message + '. Muat ulang halaman; bila berulang, hapus data situs lalu buka lagi.'; f.classList.remove('hidden'); }
     });
   </script>
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=7"></script>
   <script>
     // Pastikan app.js yang termuat cocok dengan halaman ini
-    if (window.__DOMPET_V !== '6') {
+    if (window.__DOMPET_V !== '7') {
       var f = document.getElementById('fatal');
       f.textContent = 'File app.js di server belum versi terbaru. Unggah ulang app.js ke GitHub, tunggu 1-2 menit, lalu muat ulang (Ctrl+Shift+R).';
       f.classList.remove('hidden');
