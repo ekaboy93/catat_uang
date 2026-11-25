@@ -247,6 +247,11 @@
         <p class="text-xs text-ink/60">Data tersimpan di Google Sheet milik akun Google Anda sendiri. Email pengingat tagihan: jalankan <b>pasangPengingatEmail()</b> di Apps Script.</p>
         <button data-act="disconnect" class="w-full rounded-xl border border-rust px-4 py-2.5 text-sm font-semibold text-rust">Ganti akun / putuskan koneksi</button>
       </div>
+      <div class="card space-y-2 !border-rust/40">
+        <p class="h-sec !mb-0 text-rust">Zona berbahaya</p>
+        <p class="text-xs text-ink/60">Hapus semua transaksi dan hutang/piutang untuk memulai dari nol.</p>
+        <button data-act="open-reset" class="w-full rounded-xl bg-rust px-4 py-2.5 text-sm font-semibold text-white">Reset semua data</button>
+      </div>
     </div>
   </div>
 
@@ -278,6 +283,24 @@
     </form>
   </div>
 
+  <!-- ============ RESET SEMUA DATA ============ -->
+  <div id="modal-reset" class="fixed inset-0 z-[55] hidden items-center bg-ink/60 p-4" role="dialog" aria-modal="true" aria-label="Reset semua data">
+    <form id="reset-form" class="mx-auto w-full max-w-md space-y-3 rounded-3xl bg-paper p-5" autocomplete="off">
+      <h2 class="text-lg font-extrabold text-rust">Reset semua data?</h2>
+      <p class="text-sm text-ink/70">Ini menghapus <b>seluruh transaksi</b> dan <b>seluruh hutang/piutang</b> di Google Sheet Anda. Tidak bisa dibatalkan dari aplikasi.</p>
+      <label class="flex items-start gap-2 text-sm"><input id="r-backup" type="checkbox" checked class="mt-0.5 h-4 w-4 accent-[#0F766E]"><span>Buat backup di Google Drive dulu (disarankan). Bila backup gagal, reset dibatalkan.</span></label>
+      <label class="flex items-start gap-2 text-sm"><input id="r-all" type="checkbox" class="mt-0.5 h-4 w-4 accent-[#B4412F]"><span>Hapus juga tagihan tetap, biaya hidup, dan anggaran</span></label>
+      <div>
+        <label for="r-confirm" class="mb-1 block text-xs font-semibold text-ink/60">Ketik HAPUS untuk melanjutkan</label>
+        <input id="r-confirm" class="field" autocomplete="off" autocapitalize="characters" placeholder="HAPUS">
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <button type="button" data-act="close-reset" class="rounded-xl border border-mist bg-white px-4 py-2.5 text-sm font-semibold">Batal</button>
+        <button id="r-submit" data-guard type="submit" disabled class="rounded-xl bg-rust px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Reset sekarang</button>
+      </div>
+    </form>
+  </div>
+
   <!-- ============ HUBUNGKAN DATA ============ -->
   <div id="modal-connect" class="fixed inset-0 z-[60] hidden items-center bg-ink/70 p-4" role="dialog" aria-modal="true" aria-label="Hubungkan data">
     <form id="connect-form" class="mx-auto max-h-[92vh] w-full max-w-md space-y-3 overflow-y-auto rounded-3xl bg-paper p-5" autocomplete="off">
@@ -304,10 +327,10 @@
       if (f) { f.textContent = 'Terjadi kesalahan: ' + e.message + '. Muat ulang halaman; bila berulang, hapus data situs lalu buka lagi.'; f.classList.remove('hidden'); }
     });
   </script>
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
   <script>
     // Pastikan app.js yang termuat cocok dengan halaman ini
-    if (window.__DOMPET_V !== '4') {
+    if (window.__DOMPET_V !== '5') {
       var f = document.getElementById('fatal');
       f.textContent = 'File app.js di server belum versi terbaru. Unggah ulang app.js ke GitHub, tunggu 1-2 menit, lalu muat ulang (Ctrl+Shift+R).';
       f.classList.remove('hidden');

@@ -1,6 +1,6 @@
 'use strict';
 
-window.__DOMPET_V = '4'; // dicek oleh index.html untuk mendeteksi app.js versi lama
+window.__DOMPET_V = '5'; // dicek oleh index.html untuk mendeteksi app.js versi lama
 
 /* ================= KONSTANTA ================= */
 const STORE = { CONN: 'dompet.conn.v1', QUEUE: 'dompet.queue.v1', CACHE: 'dompet.cache.' };
@@ -115,7 +115,7 @@ let busyCount = 0;
 function setBusy(on) {
   busyCount = Math.max(0, busyCount + (on ? 1 : -1));
   $('#busy').style.transform = busyCount > 0 ? 'scaleX(.85)' : 'scaleX(0)';
-  $$('button[type=submit]').forEach(b => (b.disabled = busyCount > 0));
+  $$('button[type=submit]:not([data-guard])').forEach(b => (b.disabled = busyCount > 0));
 }
 
 /* ================= API ================= */
@@ -217,7 +217,7 @@ async function mutate(action, payload, okMsg) {
     saveCache();
     $('#offline-banner').classList.add('hidden');
     if (okMsg) toast(okMsg);
-    render();
+    try { render(); } catch (err) { setTimeout(() => { throw err; }); } // galat tampilan tidak boleh menutupi keberhasilan aksi
     return true;
   } catch (e) {
     if (action === 'addTransaction' && isNetErr(e)) return queueIt();
@@ -643,6 +643,8 @@ document.addEventListener('click', async e => {
     case 'type': state.type = el.dataset.type; resetPicker('f'); renderTabs(); break;
     case 'open-settings': show('#modal-settings'); break;
     case 'close-settings': hide('#modal-settings'); break;
+    case 'open-reset': $('#r-confirm').value = ''; $('#r-backup').checked = true; $('#r-all').checked = false; syncResetBtn(); show('#modal-reset'); break;
+    case 'close-reset': hide('#modal-reset'); break;
     case 'close-edit': state.editType = null; hide('#modal-edit'); break;
     case 'pick-cat': picker[el.dataset.p] = { cat: el.dataset.cat, adding: false }; renderPickers(); break;
     case 'new-cat': picker[el.dataset.p] = { cat: '', adding: true }; renderPickers(); $(`#${el.dataset.p}-cat-new`).focus(); break;
@@ -713,7 +715,7 @@ document.addEventListener('click', async e => {
   }
 });
 
-['#modal-settings', '#modal-edit'].forEach(sel => $(sel).addEventListener('click', e => { if (e.target.id === sel.slice(1)) hide(sel); }));
+['#modal-settings', '#modal-edit', '#modal-reset'].forEach(sel => $(sel).addEventListener('click', e => { if (e.target.id === sel.slice(1)) hide(sel); }));
 
 
 $('#tx-form').addEventListener('submit', async e => {
@@ -749,6 +751,23 @@ $('#edit-form').addEventListener('submit', async e => {
     tujuan: t.type === 'Transfer' ? otherFund(sumber) : '', deskripsi: $('#e-desc').value.trim()
   }, 'Perubahan disimpan');
   if (ok) { state.editType = null; hide('#modal-edit'); }
+});
+
+const syncResetBtn = () => { $('#r-submit').disabled = busyCount > 0 || $('#r-confirm').value.trim().toUpperCase() !== 'HAPUS'; };
+$('#r-confirm').addEventListener('input', syncResetBtn);
+$('#reset-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  if ($('#r-confirm').value.trim().toUpperCase() !== 'HAPUS') return toast('Ketik HAPUS untuk melanjutkan', 'error');
+  if (!navigator.onLine) return toast('Reset butuh koneksi internet', 'error');
+  const backup = $('#r-backup').checked;
+  $('#r-submit').disabled = true;
+  const ok = await mutate('resetAll', { confirm: 'HAPUS', backup, all: $('#r-all').checked });
+  if (!ok) { syncResetBtn(); return; } // galat sudah ditampilkan; modal tetap terbuka
+  setQueue([]);           // catatan offline yang belum terkirim ikut dibuang
+  state.extra = {};
+  hide('#modal-reset'); hide('#modal-settings');
+  await loadData();       // muat ulang dari server (kosong)
+  toast(backup ? 'Semua data direset. Backup ada di folder Drive "Dompet Fleksibel - Backup".' : 'Semua data direset.');
 });
 
 $('#hp-form').addEventListener('submit', async e => {
