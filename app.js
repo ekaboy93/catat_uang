@@ -1,6 +1,6 @@
 'use strict';
 
-window.__DOMPET_V = '7'; // dicek oleh index.html untuk mendeteksi app.js versi lama
+window.__DOMPET_V = '8'; // dicek oleh index.html untuk mendeteksi app.js versi lama
 
 /* ================= KONSTANTA ================= */
 const STORE = { CONN: 'dompet.conn.v1', QUEUE: 'dompet.queue.v1', CACHE: 'dompet.cache.' };
@@ -655,7 +655,7 @@ function renderSheet() {
   if (!sheet) return;
   const bal = fundBalances();
   const amt = parseRp($('#s-nominal').value);
-  const cur = bal[sheet.fund], other = otherFund(sheet.fund);
+  const cur = bal[sheet.fund];
   [['kas', FUND.KAS, 'bg-kas'], ['vault', FUND.VAULT, 'bg-vault']].forEach(([k, name, bg]) => {
     const b = $(`#s-fund-${k}`), on = sheet.fund === name;
     b.className = 'rounded-xl border px-3 py-2.5 text-left transition ' + (on ? bg + ' border-transparent text-white' : 'border-mist bg-white text-ink');
@@ -663,25 +663,21 @@ function renderSheet() {
     b.innerHTML = `<span class="block text-sm font-semibold">${name}</span><span class="block text-xs ${on ? 'text-white/80' : 'text-ink/60'}">Saldo ${rp(bal[name])}</span>`;
   });
   let msg, bad = false;
-  if (sheet.mode === 'transfer') {
-    msg = `${sheet.fund} ke ${other}. Saldo ${other} menjadi ${rp(bal[other] + amt)}.`;
-    if (amt > cur) { bad = true; msg = `Saldo ${sheet.fund} kurang ${rp(amt - cur)}.`; }
-  } else if (sheetOut()) {
+  if (sheetOut()) {
     msg = `Saldo ${sheet.fund} setelahnya ${rp(cur - amt)}.`;
     if (amt > cur) { bad = true; msg = `Saldo ${sheet.fund} tidak cukup, kurang ${rp(amt - cur)}. Saldo akan menjadi minus.`; }
   } else msg = `Saldo ${sheet.fund} setelahnya ${rp(cur + amt)}.`;
   const note = $('#s-note');
   note.textContent = amt > 0 ? msg : '';
   note.className = 'mt-1.5 text-xs ' + (bad ? 'font-semibold text-rust' : 'text-ink/60');
-  const maxAmt = sheet.mode === 'transfer' ? Math.max(0, cur) : sheet.max;
+  const maxAmt = sheet.max;
   $('#s-quick').innerHTML = maxAmt > 0
-    ? `<button type="button" data-act="s-fill" data-amt="${Math.round(maxAmt)}" class="rounded-full border border-mist bg-white px-3 py-1 text-xs font-semibold text-ink/70">${sheet.mode === 'transfer' ? 'Semua saldo' : 'Semua sisa'} ${rp(maxAmt)}</button>` : '';
-  $('#s-desc').classList.toggle('hidden', !(sheet.mode === 'transfer' && sheet.fund === FUND.VAULT));
+    ? `<button type="button" data-act="s-fill" data-amt="${Math.round(maxAmt)}" class="rounded-full border border-mist bg-white px-3 py-1 text-xs font-semibold text-ink/70">Semua sisa ${rp(maxAmt)}</button>` : '';
 }
 
 function openSheet(cfg) {
   sheet = { mode: cfg.mode, id: cfg.id, fund: FUND.KAS, max: 0, target: null };
-  let title = 'Pindahkan dana', sub = 'Pindahkan saldo antara Kas Harian dan Brankas Darurat', label = 'Pindahkan dari', pre = '';
+  let title, sub, label, pre = '';
   if (cfg.mode === 'hutang') {
     const h = state.data.hutang.find(x => x.id === cfg.id);
     if (!h) { sheet = null; return; }
@@ -700,9 +696,7 @@ function openSheet(cfg) {
   $('#s-title').textContent = title;
   $('#s-sub').textContent = sub;
   $('#s-fund-label').textContent = label;
-  $('#s-submit').textContent = cfg.mode === 'transfer' ? 'Pindahkan' : 'Simpan';
   setMoney($('#s-nominal'), pre);
-  $('#s-desc').value = '';
   renderSheet();
   show('#modal-sheet');
   setTimeout(() => $('#s-nominal').focus(), 50);
@@ -740,7 +734,6 @@ document.addEventListener('click', async e => {
       break;
     }
     case 'pay-bill': openSheet({ mode: 'bill', id }); break;
-    case 'open-transfer': openSheet({ mode: 'transfer' }); break;
     case 's-fund': if (sheet) { sheet.fund = el.dataset.fund; renderSheet(); } break;
     case 's-fill': setMoney($('#s-nominal'), Number(el.dataset.amt)); renderSheet(); break;
     case 'close-sheet': sheet = null; hide('#modal-sheet'); break;
@@ -831,20 +824,13 @@ $('#sheet-form').addEventListener('submit', async e => {
   const cur = fundBalances()[sheet.fund];
   const today = dateStr(new Date());
   if (amt <= 0) return toast('Nominal harus lebih dari 0', 'error');
-  if (sheet.mode !== 'transfer' && amt > sheet.max) return toast(`Nominal melebihi sisa (${rp(sheet.max)})`, 'error');
+  if (amt > sheet.max) return toast(`Nominal melebihi sisa (${rp(sheet.max)})`, 'error');
+  if (sheetOut() && amt > cur && !confirm(`Saldo ${sheet.fund} (${rp(cur)}) tidak cukup. Saldo akan menjadi minus. Lanjutkan?`)) return;
   let ok;
-  if (sheet.mode === 'transfer') {
-    const desc = $('#s-desc').value.trim();
-    if (amt > cur) return toast(`Saldo ${sheet.fund} tidak cukup`, 'error');
-    if (sheet.fund === FUND.VAULT && !desc) return toast('Isi alasan untuk menarik dari Brankas Darurat', 'error');
-    ok = await mutate('addTransaction', { tanggal: today, type: 'Transfer', category: 'Transfer', nominal: amt, deskripsi: desc, sumber: sheet.fund, tujuan: otherFund(sheet.fund) }, `Dipindahkan ke ${otherFund(sheet.fund)}`);
+  if (sheet.mode === 'hutang') {
+    ok = await mutate('settleHutang', { id: sheet.id, sumber: sheet.fund, tanggal: today, jumlah: amt }, amt >= sheet.max ? 'Ditandai lunas dan dicatat' : 'Cicilan dicatat');
   } else {
-    if (sheetOut() && amt > cur && !confirm(`Saldo ${sheet.fund} (${rp(cur)}) tidak cukup. Saldo akan menjadi minus. Lanjutkan?`)) return;
-    if (sheet.mode === 'hutang') {
-      ok = await mutate('settleHutang', { id: sheet.id, sumber: sheet.fund, tanggal: today, jumlah: amt }, amt >= sheet.max ? 'Ditandai lunas dan dicatat' : 'Cicilan dicatat');
-    } else {
-      ok = await mutate('addTransaction', { tanggal: today, type: 'Expense', category: 'Tagihan', nominal: amt, deskripsi: 'Tagihan: ' + sheet.target.nama, sumber: sheet.fund, refId: sheet.id }, 'Tagihan dibayar dari ' + sheet.fund);
-    }
+    ok = await mutate('addTransaction', { tanggal: today, type: 'Expense', category: 'Tagihan', nominal: amt, deskripsi: 'Tagihan: ' + sheet.target.nama, sumber: sheet.fund, refId: sheet.id }, 'Tagihan dibayar dari ' + sheet.fund);
   }
   if (ok) { sheet = null; hide('#modal-sheet'); }
 });

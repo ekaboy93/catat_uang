@@ -71,11 +71,6 @@
         </div>
       </div>
 
-      <button data-act="open-transfer" class="flex w-full items-center justify-center gap-2 rounded-xl border border-mist bg-white py-2.5 text-sm font-semibold text-ink active:scale-[.99]">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h13l-4-4M17 17H4l4 4"/></svg>
-        Pindahkan dana antar brankas
-      </button>
-
       <div id="alerts" class="space-y-2"></div>
 
       <div class="card">
@@ -320,7 +315,7 @@
         </div>
         <p id="s-note" class="mt-1.5 text-xs"></p>
       </div>
-      <input id="s-desc" class="field hidden" placeholder="Alasan menarik dari Brankas Darurat (wajib)" aria-label="Alasan">
+      
       <div class="grid grid-cols-2 gap-2">
         <button type="button" data-act="close-sheet" class="rounded-xl border border-mist bg-white px-4 py-2.5 text-sm font-semibold">Batal</button>
         <button id="s-submit" class="btn" type="submit">Simpan</button>
@@ -372,10 +367,10 @@
       if (f) { f.textContent = 'Terjadi kesalahan: ' + e.message + '. Muat ulang halaman; bila berulang, hapus data situs lalu buka lagi.'; f.classList.remove('hidden'); }
     });
   </script>
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=8"></script>
   <script>
     // Pastikan app.js yang termuat cocok dengan halaman ini
-    if (window.__DOMPET_V !== '7') {
+    if (window.__DOMPET_V !== '8') {
       var f = document.getElementById('fatal');
       f.textContent = 'File app.js di server belum versi terbaru. Unggah ulang app.js ke GitHub, tunggu 1-2 menit, lalu muat ulang (Ctrl+Shift+R).';
       f.classList.remove('hidden');
