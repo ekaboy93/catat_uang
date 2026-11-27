@@ -99,6 +99,14 @@
       
 
       <div class="card">
+        <div class="mb-2 flex items-center justify-between">
+          <p class="h-sec !mb-0">Batas pengeluaran</p>
+          <button data-act="open-settings" class="text-xs font-semibold text-kas">Atur</button>
+        </div>
+        <div id="budget-list" class="space-y-4"></div>
+      </div>
+
+      <div class="card">
         <p class="h-sec">Sisa tagihan bulan ini</p>
         <ul id="bill-list"></ul>
       </div>
@@ -196,17 +204,23 @@
         <button class="btn w-full" type="submit">Simpan target</button>
       </form>
       <div class="card">
-        <p class="h-sec">Anggaran per kategori (bulanan)</p>
+        <p class="h-sec">Batas pengeluaran per kategori</p>
         <ul id="settings-budgets" class="mb-3"></ul>
         <form id="budget-form" class="space-y-2" autocomplete="off">
           <div id="b-chips" class="flex flex-wrap gap-1.5"></div>
           <input id="b-cat-new" class="field hidden" placeholder="Nama kategori baru" maxlength="30" aria-label="Kategori baru">
+          <div class="grid grid-cols-3 gap-1.5 rounded-xl bg-paper p-1" role="group" aria-label="Periode batas">
+            <button type="button" data-act="b-period" data-p="harian" id="bp-harian">Per hari</button>
+            <button type="button" data-act="b-period" data-p="mingguan" id="bp-mingguan">Per minggu</button>
+            <button type="button" data-act="b-period" data-p="bulanan" id="bp-bulanan">Per bulan</button>
+          </div>
           <div class="grid grid-cols-3 gap-2">
-            <input id="bud-limit" type="text" inputmode="numeric" autocomplete="off" required placeholder="Batas bulanan" aria-label="Batas bulanan" class="field money col-span-2">
+            <input id="bud-limit" type="text" inputmode="numeric" autocomplete="off" required placeholder="Batas per hari" aria-label="Batas" class="field money col-span-2">
             <button class="btn" type="submit">Simpan</button>
           </div>
+          <p id="b-equiv" class="text-xs text-ink/60"></p>
         </form>
-        <p class="mt-1.5 text-[11px] text-ink/60">Isi batas 0 untuk menghapus anggaran.</p>
+        <p class="mt-1.5 text-[11px] text-ink/60">Isi batas 0 untuk menghapus. Menyimpan kategori yang sama akan mengubah batasnya.</p>
       </div>
       <div class="card">
         <p class="h-sec">Tagihan tetap</p>
@@ -367,10 +381,10 @@
       if (f) { f.textContent = 'Terjadi kesalahan: ' + e.message + '. Muat ulang halaman; bila berulang, hapus data situs lalu buka lagi.'; f.classList.remove('hidden'); }
     });
   </script>
-  <script src="app.js?v=8"></script>
+  <script src="app.js?v=9"></script>
   <script>
     // Pastikan app.js yang termuat cocok dengan halaman ini
-    if (window.__DOMPET_V !== '8') {
+    if (window.__DOMPET_V !== '9') {
       var f = document.getElementById('fatal');
       f.textContent = 'File app.js di server belum versi terbaru. Unggah ulang app.js ke GitHub, tunggu 1-2 menit, lalu muat ulang (Ctrl+Shift+R).';
       f.classList.remove('hidden');

@@ -1,6 +1,6 @@
 'use strict';
 
-window.__DOMPET_V = '8'; // dicek oleh index.html untuk mendeteksi app.js versi lama
+window.__DOMPET_V = '9'; // dicek oleh index.html untuk mendeteksi app.js versi lama
 
 /* ================= KONSTANTA ================= */
 const STORE = { CONN: 'dompet.conn.v1', QUEUE: 'dompet.queue.v1', CACHE: 'dompet.cache.' };
@@ -77,8 +77,8 @@ const cacheKey = () => STORE.CACHE + hashStr(conn.url);
 const getQueue = () => readJSON(STORE.QUEUE, []);
 const setQueue = q => localStorage.setItem(STORE.QUEUE, JSON.stringify(q));
 
-const emptyData = () => ({ transactions: [], hutang: [], bills: [], settings: {}, meta: { windowStart: '0000-00-00', opening: {} } });
-const state = { data: emptyData(), extra: {}, tab: 'beranda', type: 'Expense', statMonth: monthKey(new Date()), fund: { f: FUND.KAS, e: FUND.KAS }, editType: null };
+const emptyData = () => ({ transactions: [], hutang: [], bills: [], settings: {}, meta: { windowStart: '0000-00-00', opening: {}, serverVersion: 0 } });
+const state = { data: emptyData(), extra: {}, tab: 'beranda', type: 'Expense', statMonth: monthKey(new Date()), budgetPeriod: 'harian', fund: { f: FUND.KAS, e: FUND.KAS }, editType: null };
 const picker = { f: { cat: '', adding: false }, e: { cat: '', adding: false }, b: { cat: '', adding: false } }; // pilihan kategori (form, edit, anggaran) // extra: transaksi bulan lama yang dimuat on-demand
 
 const nTx = t => ({ ...t, nominal: Number(t.nominal) || 0, tujuan: t.tujuan || '', refId: t.refId || '', deskripsi: t.deskripsi || '' });
@@ -93,7 +93,7 @@ function normalize(d) {
     hutang: (d.hutang || []).filter(h => h.status === 'Pending').map(nHutang),
     bills: (d.bills || []).map(nBill),
     settings: d.settings || {},
-    meta: { windowStart: meta.windowStart || '0000-00-00', opening: meta.opening || {} }
+    meta: { windowStart: meta.windowStart || '0000-00-00', opening: meta.opening || {}, serverVersion: meta.serverVersion || 0 }
   };
   const ids = new Set(out.transactions.map(t => t.id));
   getQueue().forEach(q => { // transaksi offline yang belum terkirim tetap terlihat
@@ -102,6 +102,55 @@ function normalize(d) {
   return out;
 }
 const parseBudgets = () => { try { return JSON.parse(state.data.settings.Budgets || '{}') || {}; } catch (e) { return {}; } };
+
+/* ---- batas pengeluaran: tarif per hari, jatah menumpuk tiap hari ---- */
+const PERIODS = ['harian', 'mingguan', 'bulanan'];
+function getBudgets() { // { kategori: {a, p} }; angka polos (format lama) = bulanan
+  const out = {};
+  Object.entries(parseBudgets()).forEach(([k, v]) => {
+    const isObj = v && typeof v === 'object';
+    const a = Number(isObj ? v.a : v);
+    if (a > 0) out[k] = { a, p: isObj && PERIODS.includes(v.p) ? v.p : 'bulanan' };
+  });
+  return out;
+}
+const rateOn = (b, d) => (b.p === 'harian' ? b.a : b.p === 'mingguan' ? b.a / 7 : b.a / daysIn(d.getFullYear(), d.getMonth()));
+function budgetEquiv(b, dim) {
+  const day = b.p === 'harian' ? b.a : b.p === 'mingguan' ? b.a / 7 : b.a / dim;
+  return { day, week: day * 7, month: b.p === 'bulanan' ? b.a : day * dim };
+}
+const monthLimitFor = (b, y, m) => budgetEquiv(b, daysIn(y, m)).month;
+
+/**
+ * Saldo jatah: tiap hari bertambah sebesar tarif harian, dikurangi pengeluaran kategori itu.
+ * Saldo positif = boleh belanja segitu. Saldo negatif = sudah dibayar di muka untuk hari-hari ke depan.
+ * Sisa jatah (positif) tidak dibawa ke bulan berikutnya; bayar di muka (negatif) dibawa.
+ */
+function budgetStatus(cat, b, now, tx) {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayS = dateStr(today);
+  const start = new Date(today.getFullYear(), today.getMonth() - 1, 1); // telusuri sejak awal bulan lalu
+  const startS = dateStr(start);
+  const catTx = tx.filter(t => isOut(t) && t.category === cat && t.tanggal <= todayS);
+  const byDay = {};
+  catTx.forEach(t => { if (t.tanggal >= startS) byDay[t.tanggal] = (byDay[t.tanggal] || 0) + t.nominal; });
+  let bal = 0;
+  for (let d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
+    if (d.getDate() === 1) bal = Math.min(0, bal);
+    bal += rateOn(b, d) - (byDay[dateStr(d)] || 0);
+  }
+  if (Math.abs(bal) < 0.5) bal = 0;
+  const rate = rateOn(b, today);
+  const weekStartS = dateStr(new Date(today.getFullYear(), today.getMonth(), today.getDate() - ((today.getDay() + 6) % 7))); // minggu mulai Senin
+  const weekSpent = sum(catTx.filter(t => t.tanggal >= weekStartS));
+  const monthSpent = sum(catTx.filter(t => t.tanggal.startsWith(monthKey(today))));
+  const monthLimit = b.p === 'bulanan' ? b.a : rate * daysIn(today.getFullYear(), today.getMonth());
+  const weekLimit = rate * 7;
+  const back = new Date(today);
+  if (bal < 0) back.setDate(back.getDate() + Math.floor(-bal / rate) + 1); // hari pertama saldo kembali positif
+  return { cat, b, rate, bal, todaySpent: byDay[todayS] || 0, weekSpent, weekLimit, monthSpent, monthLimit,
+    ratioW: weekSpent / weekLimit, ratioM: monthSpent / monthLimit, aheadDays: bal < 0 ? -bal / rate : 0, backDate: back };
+}
 
 /* ================= UI KECIL ================= */
 function toast(msg, kind) {
@@ -140,7 +189,7 @@ function saveCache() {
     let tx = d.transactions.filter(t => !t.pending);
     const opening = { ...d.meta.opening };
     if (cut) { tx.filter(t => t.tanggal < cut).forEach(t => applyBal(opening, t)); tx = tx.filter(t => t.tanggal >= cut); }
-    localStorage.setItem(cacheKey(), JSON.stringify({ ...d, transactions: tx, meta: { windowStart: cut || d.meta.windowStart, opening } }));
+    localStorage.setItem(cacheKey(), JSON.stringify({ ...d, transactions: tx, meta: { ...d.meta, windowStart: cut || d.meta.windowStart, opening } }));
   };
   try { attempt(); } catch (e) { try { attempt(monthStart(2)); } catch (e2) { /* abaikan */ } }
 }
@@ -274,9 +323,7 @@ function compute() {
   const [rcMonth, rcN] = String(settings.ResetCount || '').split('|');
   const resetCount = rcMonth === prefix ? Number(rcN) || 0 : 0;
 
-  const spent = {};
-  monthTx.filter(isOut).forEach(t => { spent[t.category] = (spent[t.category] || 0) + t.nominal; });
-  const budgetRows = Object.entries(parseBudgets()).map(([cat, limit]) => ({ cat, limit, spent: spent[cat] || 0, ratio: (spent[cat] || 0) / limit }));
+  const budgetRows = Object.entries(getBudgets()).map(([cat, b]) => budgetStatus(cat, b, now, tx));
 
   return {
     totalDays, sisaHari, kas, vault, living, emergMonths, vaultMonths, vaultPct, billRows, totalBills, sisaTagihan, targetBulan, lowerBound,
@@ -320,6 +367,7 @@ function render() {
   const c = compute();
   $('#today-label').textContent = longDate(dateStr(new Date())) + ' \u00b7 v' + window.__DOMPET_V;
   renderBeranda(c);
+  renderBudgetCard(c);
   renderHistori();
   renderStatistik(c);
   renderBuku();
@@ -355,7 +403,10 @@ function renderBeranda(c) {
     const when = b.daysLeft < 0 ? `terlambat ${-b.daysLeft} hari` : b.daysLeft === 0 ? 'jatuh tempo hari ini' : `jatuh tempo ${b.daysLeft} hari lagi`;
     alerts.push({ k: b.daysLeft < 0 ? 'border-rust' : 'border-saffron', t: `${b.nama} ${when} (${rp(b.remaining)})` });
   });
-  c.budgetRows.filter(b => b.ratio >= 0.8).forEach(b => alerts.push({ k: b.ratio >= 1 ? 'border-rust' : 'border-saffron', t: `Anggaran ${b.cat} ${Math.round(b.ratio * 100)}% terpakai (${rp(b.spent)} dari ${rp(b.limit)})` }));
+  c.budgetRows.forEach(r => {
+    if (r.ratioM >= 0.8) alerts.push({ k: r.ratioM >= 1 ? 'border-rust' : 'border-saffron', t: `Batas ${r.cat} bulan ini ${Math.round(r.ratioM * 100)}% terpakai (${rp(r.monthSpent)} dari ${rp(r.monthLimit)})` });
+    else if (r.ratioW >= 1) alerts.push({ k: 'border-rust', t: `Batas ${r.cat} minggu ini terlampaui (${rp(r.weekSpent)} dari ${rp(r.weekLimit)})` });
+  });
   const nq = getQueue().length;
   if (nq) alerts.push({ k: 'border-ink/40', t: `${nq} transaksi menunggu sinkron` });
   $('#alerts').innerHTML = alerts.map(a => `<div class="rounded-xl border-l-4 ${a.k} bg-white px-3 py-2 text-xs font-semibold shadow-sm">${esc(a.t)}</div>`).join('');
@@ -371,6 +422,19 @@ function renderBeranda(c) {
             <button data-act="pay-bill" data-id="${esc(b.id)}" class="text-xs font-semibold text-kas">Bayar</button></div></li>`;
       }).join('')
     : `<li class="py-3 text-sm text-ink/60">${c.billRows.length ? 'Semua tagihan bulan ini sudah lunas.' : 'Belum ada tagihan. Tambahkan lewat Pengaturan.'}</li>`;
+}
+
+function renderBudgetCard(c) {
+  const bar = (label, spent, limit, ratio) => `<div><div class="flex justify-between text-[11px]"><span class="text-ink/60">${label}</span><span class="font-semibold">${rp(spent)} / ${rp(limit)}</span></div>
+    <div class="mt-0.5 h-1.5 overflow-hidden rounded-full bg-mist"><div class="h-full rounded-full ${ratio >= 1 ? 'bg-rust' : ratio >= 0.8 ? 'bg-saffron' : 'bg-kas'}" style="width:${Math.min(100, ratio * 100)}%"></div></div></div>`;
+  const dateLbl = d => d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+  $('#budget-list').innerHTML = c.budgetRows.length ? c.budgetRows.map(r => {
+    const daily = r.bal >= 0
+      ? `<p class="mt-1 text-xs font-semibold text-kas">Hari ini aman, tersedia ${rp(r.bal)}${r.todaySpent > 0 ? ` <span class="font-normal text-ink/60">(terpakai ${rp(r.todaySpent)})</span>` : ''}</p>`
+      : `<p class="mt-1 text-xs font-semibold text-ink">Terbayar di muka ${rp(-r.bal)} <span class="font-normal text-ink/60">(setara ${r.aheadDays.toLocaleString('id-ID', { maximumFractionDigits: 1 })} hari)</span>. Jatah tersedia lagi ${dateLbl(r.backDate)}.</p>`;
+    return `<div><div class="flex items-baseline justify-between"><p class="text-sm font-bold">${esc(r.cat)}</p><p class="text-xs text-ink/60">${rp(r.rate)}/hari</p></div>${daily}
+      <div class="mt-2 space-y-1.5">${bar('Minggu ini', r.weekSpent, r.weekLimit, r.ratioW)}${bar('Bulan ini', r.monthSpent, r.monthLimit, r.ratioM)}</div></div>`;
+  }).join('') : '<p class="text-sm text-ink/60">Belum ada batas. Tekan Atur, misalnya Bensin Rp 15.000 per hari. Beli sekaligus untuk beberapa hari tetap aman.</p>';
 }
 
 function txRow(t) {
@@ -434,7 +498,7 @@ function renderStatistik(c) {
     ${cur.noearn > 0 ? `<p class="text-ink/60">Di luar Total In: pelunasan pinjaman ${rp(cur.noearn)} (bukan penghasilan).</p>` : ''}`;
 
   const entries = Object.entries(cur.cats).sort((a, b) => b[1] - a[1]);
-  const budgets = parseBudgets();
+  const budgets = Object.fromEntries(Object.entries(getBudgets()).map(([k, b]) => [k, monthLimitFor(b, sy, sm - 1)]));
   const insights = [];
   if (net < 0) insights.push('Pengeluaran melebihi pemasukan bulan ini.');
   if (dOut != null && dOut > 10) insights.push(`Pengeluaran naik ${Math.round(dOut)}% dari bulan lalu.`);
@@ -501,11 +565,13 @@ function renderSettings() {
         <span class="flex items-center gap-3"><span class="font-bold">${rp(b.nominal)}</span>
           <button data-act="del-bill" data-id="${esc(b.id)}" class="text-xs text-rust">Hapus</button></span></li>`).join('')
     : '<li class="py-2 text-sm text-ink/60">Belum ada tagihan tetap.</li>';
-  const bud = Object.entries(parseBudgets());
+  const bud = Object.entries(getBudgets());
+  const nowD = new Date(), dimN = daysIn(nowD.getFullYear(), nowD.getMonth());
   $('#settings-budgets').innerHTML = bud.length
-    ? bud.map(([k, v]) => `<li class="flex items-center justify-between border-b border-mist py-2.5 text-sm last:border-0"><span class="font-semibold">${esc(k)}</span>
-        <span class="flex items-center gap-3"><span class="font-bold">${rp(v)}</span><button data-act="del-budget" data-id="${esc(k)}" class="text-xs text-rust">Hapus</button></span></li>`).join('')
-    : '<li class="py-2 text-sm text-ink/60">Belum ada anggaran.</li>';
+    ? bud.map(([k, b]) => { const q = budgetEquiv(b, dimN); return `<li class="flex items-center justify-between gap-3 border-b border-mist py-2.5 text-sm last:border-0">
+        <span class="min-w-0"><span class="block font-semibold">${esc(k)}</span><span class="block text-xs text-ink/60">${rp(q.day)}/hari - ${rp(q.week)}/minggu - ${rp(q.month)}/bulan</span></span>
+        <span class="flex shrink-0 items-center gap-3"><button data-act="edit-budget" data-id="${esc(k)}" class="text-xs font-semibold text-kas">Ubah</button><button data-act="del-budget" data-id="${esc(k)}" class="text-xs text-rust">Hapus</button></span></li>`; }).join('')
+    : '<li class="py-2 text-sm text-ink/60">Belum ada batas.</li>';
 }
 
 function renderTabs() {
@@ -556,6 +622,7 @@ function renderPickers() {
   const note = $('#f-transfer-note');
   note.classList.toggle('hidden', !tr);
   note.textContent = tr ? `Dipindahkan ke ${otherFund(state.fund.f)}` : '';
+  renderBudgetForm();
   if (state.editType) {
     const trE = state.editType === 'Transfer';
     if (!trE) renderChips('e', state.editType);
@@ -564,6 +631,23 @@ function renderPickers() {
     en.textContent = trE ? `Dipindahkan ke ${otherFund(state.fund.e)}` : '';
   }
 }
+function renderBudgetForm() {
+  const labels = { harian: 'Batas per hari', mingguan: 'Batas per minggu', bulanan: 'Batas per bulan' };
+  PERIODS.forEach(p => {
+    const b = $('#bp-' + p), on = state.budgetPeriod === p;
+    b.className = 'rounded-lg py-2 text-xs font-semibold transition ' + (on ? 'bg-ink text-white' : 'text-ink/60');
+    b.setAttribute('aria-pressed', String(on));
+  });
+  const inp = $('#bud-limit');
+  inp.placeholder = labels[state.budgetPeriod];
+  inp.setAttribute('aria-label', labels[state.budgetPeriod]);
+  const a = parseRp(inp.value), eq = $('#b-equiv');
+  if (a > 0) {
+    const d = new Date(), q = budgetEquiv({ a, p: state.budgetPeriod }, daysIn(d.getFullYear(), d.getMonth()));
+    eq.textContent = `Setara ${rp(q.day)}/hari - ${rp(q.week)}/minggu - ${rp(q.month)}/bulan`;
+  } else eq.textContent = 'Beli sekaligus tidak masalah: Beranda menunjukkan berapa hari ke depan yang sudah terbayar di muka.';
+}
+$('#bud-limit').addEventListener('input', renderBudgetForm);
 const pickedCat = p => (picker[p].adding ? cleanCat($(`#${p}-cat-new`).value) : picker[p].cat);
 const resetPicker = p => { picker[p] = { cat: '', adding: false }; $(`#${p}-cat-new`).value = ''; };
 
@@ -713,6 +797,17 @@ document.addEventListener('click', async e => {
     case 'open-settings': show('#modal-settings'); break;
     case 'close-settings': hide('#modal-settings'); break;
     case 'open-tx': openTx(); break;
+    case 'b-period': state.budgetPeriod = el.dataset.p; renderPickers(); break;
+    case 'edit-budget': {
+      const bd = getBudgets()[id];
+      if (!bd) break;
+      picker.b = { cat: id, adding: false };
+      state.budgetPeriod = bd.p;
+      setMoney($('#bud-limit'), bd.a);
+      renderPickers();
+      $('#bud-limit').focus();
+      break;
+    }
     case 'close-tx': hide('#modal-tx'); break;
     case 'open-reset': $('#r-confirm').value = ''; $('#r-backup').checked = true; $('#r-all').checked = false; syncResetBtn(); show('#modal-reset'); break;
     case 'close-reset': hide('#modal-reset'); break;
@@ -753,8 +848,9 @@ document.addEventListener('click', async e => {
       if (confirm('Hapus tagihan ini?')) await mutate('deleteBill', { id }, 'Tagihan dihapus');
       break;
     case 'del-budget': {
-      const b = parseBudgets(); delete b[id];
-      await mutate('saveSetting', { key: 'Budgets', value: JSON.stringify(b) }, 'Anggaran dihapus');
+      if ((state.data.meta.serverVersion || 0) < 4) { toast('Server belum diperbarui. Salin Code.gs terbaru lalu deploy versi baru.', 'error'); break; }
+      const b = getBudgets(); delete b[id];
+      await mutate('saveSetting', { key: 'Budgets', value: JSON.stringify(b) }, 'Batas dihapus');
       break;
     }
     case 'settle': openSheet({ mode: 'hutang', id, full: true }); break;
@@ -856,10 +952,11 @@ $('#budget-form').addEventListener('submit', async e => {
   e.preventDefault();
   const kat = pickedCat('b');
   if (!kat) return toast('Pilih kategori atau tulis kategori baru', 'error');
-  const b = parseBudgets();
+  if ((state.data.meta.serverVersion || 0) < 4) return toast('Server belum diperbarui. Salin Code.gs terbaru ke Apps Script lalu deploy versi baru.', 'error');
+  const b = getBudgets();
   const lim = parseRp($('#bud-limit').value);
-  if (lim > 0) b[kat] = lim; else delete b[kat];
-  const ok = await mutate('saveSetting', { key: 'Budgets', value: JSON.stringify(b) }, lim > 0 ? 'Anggaran disimpan' : 'Anggaran dihapus');
+  if (lim > 0) b[kat] = { a: lim, p: state.budgetPeriod }; else delete b[kat];
+  const ok = await mutate('saveSetting', { key: 'Budgets', value: JSON.stringify(b) }, lim > 0 ? 'Batas disimpan' : 'Batas dihapus');
   if (ok) { $('#bud-limit').value = ''; resetPicker('b'); renderPickers(); }
 });
 $('#bill-form').addEventListener('submit', async e => {
