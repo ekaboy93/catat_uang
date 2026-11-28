@@ -1,6 +1,6 @@
 'use strict';
 
-window.__DOMPET_V = '11'; // dicek oleh index.html untuk mendeteksi app.js versi lama
+window.__DOMPET_V = '12'; // dicek oleh index.html untuk mendeteksi app.js versi lama
 
 /* ================= KONSTANTA ================= */
 const STORE = { CONN: 'dompet.conn.v1', QUEUE: 'dompet.queue.v1', CACHE: 'dompet.cache.' };
@@ -353,10 +353,20 @@ function compute() {
 
   const limitRow = limitFor(now, tx);
 
+  // Aman dibelanjakan hari ini = yang terkecil dari tiga batas (urutan seri: kas, batas, jatah)
+  const cashFree = kas - sisaTagihan;                                              // uang bebas setelah menyisihkan tagihan
+  const cashPerDay = Math.max(0, cashFree / sisaHari);                             // 1. agar uang cukup sampai akhir bulan
+  const dayLeft = limitRow ? Math.max(0, limitRow.rate - limitRow.todaySpent) : null;   // 2. sisa batas harian
+  const paceCap = limitRow ? Math.max(0, Math.min(limitRow.bal, cashFree)) : null;      // 3. jatah menumpuk, maks. sebesar kas
+  const parts = [['kas', cashPerDay]];
+  if (limitRow) parts.push(['batas', dayLeft], ['jatah', paceCap]);
+  let [safeBy, safeSpend] = parts.reduce((m, p) => (p[1] < m[1] ? p : m));
+  if (limitRow && limitRow.bal < 0 && safeSpend === 0) safeBy = 'jatah'; // sudah terbayar di muka: itu alasan sebenarnya
+
   return {
     totalDays, sisaHari, kas, vault, living, emergMonths, vaultMonths, vaultPct, billRows, totalBills, sisaTagihan, targetBulan, lowerBound,
     resetOn, resetCount, deficit, daily, incomeToday, limitRow,
-    safeSpend: Math.max(0, (kas - sisaTagihan) / sisaHari),
+    safeSpend, safeBy, cashFree, cashPerDay, dayLeft, paceCap,
     progress: daily > 0 ? Math.min(100, (incomeToday / daily) * 100) : 100
   };
 }
@@ -411,7 +421,12 @@ function renderBeranda(c) {
     ? 'Isi biaya hidup di Pengaturan untuk melihat ketahanan dana.'
     : `Cukup ${c.vaultMonths.toFixed(1)} bulan hidup, target ${c.emergMonths} bulan`;
   $('#safe-spend').textContent = rp(c.safeSpend);
-  $('#safe-note').textContent = `Saldo Kas Harian dikurangi sisa tagihan, dibagi ${c.sisaHari} hari tersisa.`;
+  const lr0 = c.limitRow;
+  $('#safe-note').textContent = !lr0
+    ? `Dari saldo Kas Harian dikurangi sisa tagihan, dibagi ${c.sisaHari} hari. Isi biaya hidup lewat Atur untuk batas harian otomatis.`
+    : c.safeBy === 'kas' ? `Dibatasi saldo kas: (${rp(c.kas)} - tagihan ${rp(c.sisaTagihan)}) ÷ ${c.sisaHari} hari.`
+    : c.safeBy === 'batas' ? `Dibatasi batas harian ${rp(lr0.rate)}${lr0.todaySpent > 0 ? `, sudah terpakai ${rp(lr0.todaySpent)}` : ''}.`
+    : lr0.bal > 0 ? `Dibatasi sisa jatah yang menumpuk (${rp(lr0.bal)}).` : 'Jatah sudah terpakai (terbayar di muka).';
 
   $('#target-badge').textContent = rp(c.daily);
   $('#target-mode').textContent = c.resetOn ? 'Mode reset: kekurangan masa lalu diabaikan.' : `Mode standar, batas bawah ${rp(c.lowerBound)} per hari.`;
@@ -455,21 +470,24 @@ function renderBeranda(c) {
 
 function renderBudgetCard(c) {
   const r = c.limitRow;
-  if (!r) {
-    $('#budget-list').innerHTML = '<p class="text-sm text-ink/60">Isi biaya hidup bulanan lewat Atur. Batas pengeluaran harian lalu dihitung otomatis: biaya hidup dibagi jumlah hari bulan itu.</p>';
-    return;
-  }
+  if (!r) { $('#budget-list').innerHTML = ''; return; }
   const level = ratio => (ratio >= 1 ? 'bg-rust' : ratio >= 0.8 ? 'bg-saffron' : 'bg-kas');
   const row = (label, spent, limit, ratio, color) => `<div><div class="flex justify-between text-[11px]"><span class="text-ink/60">${label}</span><span class="font-semibold">${rp(spent)} / ${rp(limit)}</span></div>
     <div class="mt-0.5 h-1.5 overflow-hidden rounded-full bg-mist"><div class="h-full rounded-full ${color}" style="width:${Math.min(100, ratio * 100)}%"></div></div></div>`;
   const dateLbl = d => d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
   const bonus = r.bonus > 0 ? ` + bonus ${rp(r.bonus)} (50% dari kelebihan pemasukan ${rp(r.excess)} di atas target ${rp(r.target)})` : '';
-  const pace = r.bal >= 0
-    ? `<p class="text-xs font-semibold text-kas">Hari ini aman, tersedia ${rp(r.bal)}</p>`
-    : `<p class="text-xs font-semibold text-ink">Terbayar di muka ${rp(-r.bal)} <span class="font-normal text-ink/60">(setara ${r.aheadDays.toLocaleString('id-ID', { maximumFractionDigits: 1 })} hari)</span>. Jatah tersedia lagi ${dateLbl(r.backDate)}.</p>`;
-  $('#budget-list').innerHTML = `<div class="flex items-baseline justify-between"><p class="text-xs text-ink/60">Batas hari ini</p><p class="text-base font-extrabold">${rp(r.rate)}</p></div>
-    <p class="text-[11px] leading-snug text-ink/60">Dasar ${rp(r.base)} (biaya hidup ÷ ${r.totalDays} hari)${bonus}</p>${pace}
-    <div class="space-y-1.5">${row('Hari ini', r.todaySpent, r.rate, r.ratioT, r.bal >= 0 ? 'bg-kas' : 'bg-saffron')}${row('Minggu ini', r.weekSpent, r.weekLimit, r.ratioW, level(r.ratioW))}${row('Bulan ini', r.monthSpent, r.monthLimit, r.ratioM, level(r.ratioM))}</div>`;
+  const pace = r.bal < 0
+    ? `<p class="text-xs font-semibold text-ink">Terbayar di muka ${rp(-r.bal)} <span class="font-normal text-ink/60">(setara ${r.aheadDays.toLocaleString('id-ID', { maximumFractionDigits: 1 })} hari)</span>. Jatah tersedia lagi ${dateLbl(r.backDate)}.</p>`
+    : r.todaySpent > r.rate ? `<p class="text-xs text-ink/70">Melewati batas hari ini, tapi masih tertutup sisa jatah hari-hari sebelumnya (${rp(r.bal)}).</p>` : '';
+  $('#budget-list').innerHTML = `<p class="text-[11px] leading-snug text-ink/60">Batas hari ini ${rp(r.rate)}: dasar ${rp(r.base)} (biaya hidup ÷ ${r.totalDays} hari)${bonus}</p>${pace}
+    <div class="space-y-1.5">${row('Hari ini', r.todaySpent, r.rate, r.ratioT, r.bal >= 0 ? 'bg-kas' : 'bg-saffron')}${row('Minggu ini', r.weekSpent, r.weekLimit, r.ratioW, level(r.ratioW))}${row('Bulan ini', r.monthSpent, r.monthLimit, r.ratioM, level(r.ratioM))}</div>
+    <details class="text-[11px] text-ink/60"><summary class="cursor-pointer font-semibold text-ink/70">Rincian perhitungan</summary>
+      <ul class="mt-1 list-disc space-y-1 pl-4">
+        <li>Sisa batas harian: ${rp(c.dayLeft)}</li>
+        <li>Saldo kas: (${rp(c.kas)} - tagihan ${rp(c.sisaTagihan)}) ÷ ${c.sisaHari} hari = ${rp(c.cashPerDay)}</li>
+        <li>Jatah menumpuk: ${rp(Math.max(0, r.bal))}, paling banyak sebesar saldo kas bebas ${rp(Math.max(0, c.cashFree))}</li>
+      </ul>
+      <p class="mt-1">Angka besar di atas adalah yang terkecil dari ketiganya.</p></details>`;
 }
 
 function txRow(t) {
