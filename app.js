@@ -1,6 +1,6 @@
 'use strict';
 
-window.__DOMPET_V = '10'; // dicek oleh index.html untuk mendeteksi app.js versi lama
+window.__DOMPET_V = '11'; // dicek oleh index.html untuk mendeteksi app.js versi lama
 
 /* ================= KONSTANTA ================= */
 const STORE = { CONN: 'dompet.conn.v1', QUEUE: 'dompet.queue.v1', CACHE: 'dompet.cache.' };
@@ -78,7 +78,7 @@ const getQueue = () => readJSON(STORE.QUEUE, []);
 const setQueue = q => localStorage.setItem(STORE.QUEUE, JSON.stringify(q));
 
 const emptyData = () => ({ transactions: [], hutang: [], bills: [], settings: {}, meta: { windowStart: '0000-00-00', opening: {}, serverVersion: 0 } });
-const state = { data: emptyData(), extra: {}, tab: 'beranda', type: 'Expense', statMonth: monthKey(new Date()), budgetPeriod: 'harian', fund: { f: FUND.KAS, e: FUND.KAS }, editType: null };
+const state = { data: emptyData(), extra: {}, tab: 'beranda', type: 'Expense', statMonth: monthKey(new Date()), fund: { f: FUND.KAS, e: FUND.KAS }, editType: null };
 const picker = { f: { cat: '', adding: false }, e: { cat: '', adding: false } }; // pilihan kategori (form catat & edit) // extra: transaksi bulan lama yang dimuat on-demand
 
 const nTx = t => ({ ...t, nominal: Number(t.nominal) || 0, tujuan: t.tujuan || '', refId: t.refId || '', deskripsi: t.deskripsi || '' });
@@ -101,56 +101,87 @@ function normalize(d) {
   });
   return out;
 }
-/* ---- batas pengeluaran keseluruhan: tarif per hari, jatah menumpuk tiap hari ---- */
-const PERIODS = ['harian', 'mingguan', 'bulanan'];
-const FIXED_CATS = ['Tagihan', 'Pelunasan Hutang']; // kewajiban tetap: tidak dihitung kecuali dicentang
-function getLimit() { // { a, p, f } atau null bila belum diatur
-  try {
-    const o = JSON.parse(state.data.settings.SpendLimit || '');
-    const a = Number(o && o.a);
-    return a > 0 && PERIODS.includes(o.p) ? { a, p: o.p, f: o.f === true } : null;
-  } catch (e) { return null; }
+/* ---- batas pengeluaran otomatis: biaya hidup / jumlah hari + 50% kelebihan pemasukan di atas target ---- */
+const FIXED_CATS = ['Tagihan', 'Pelunasan Hutang']; // kewajiban tetap: tidak dihitung dalam batas
+const BONUS_SHARE = 0.5;                            // porsi kelebihan pemasukan yang menambah batas
+const parseDate = s => new Date(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10));
+
+/** Target pemasukan harian pada tanggal d (rumus yang sama dengan kartu Target di Beranda). */
+function targetOn(d, { tx, bills, living, resetOn }) {
+  const total = daysIn(d.getFullYear(), d.getMonth());
+  const sisaHari = Math.max(1, total - d.getDate() + 1);
+  const dS = dateStr(d);
+  const monthTx = tx.filter(t => t.tanggal.startsWith(monthKey(d)));
+  if (resetOn) { // amnesti defisit: sisa tagihan / sisa hari + jatah biaya hidup harian
+    const sisaTagihan = bills.reduce((s, b) => s + Math.max(0, b.nominal - sum(monthTx.filter(t => isOut(t) && t.refId === b.id && t.tanggal <= dS))), 0);
+    return sisaTagihan / sisaHari + living / total;
+  }
+  const targetBulan = living + sum(bills);
+  const incomeBefore = sum(monthTx.filter(t => isEarn(t) && t.tanggal < dS));
+  return Math.max((targetBulan - incomeBefore) / sisaHari, targetBulan / total);
 }
-const rateOn = (b, d) => (b.p === 'harian' ? b.a : b.p === 'mingguan' ? b.a / 7 : b.a / daysIn(d.getFullYear(), d.getMonth()));
-function budgetEquiv(b, dim) {
-  const day = b.p === 'harian' ? b.a : b.p === 'mingguan' ? b.a / 7 : b.a / dim;
-  return { day, week: day * 7, month: b.p === 'bulanan' ? b.a : day * dim };
-}
-const monthLimitFor = (b, y, m) => budgetEquiv(b, daysIn(y, m)).month;
-const limitedTx = (lim, tx) => tx.filter(t => isOut(t) && (lim.f || !FIXED_CATS.includes(t.category)));
 
 /**
- * Saldo jatah: tiap hari bertambah sebesar tarif harian, dikurangi pengeluaran yang dihitung (tx).
- * Saldo positif = boleh belanja segitu. Saldo negatif = sudah dibayar di muka untuk hari-hari ke depan.
+ * Batas pengeluaran per hari = biaya hidup / jumlah hari bulan itu (dasar)
+ *   + 50% dari kelebihan pemasukan hari itu di atas target hari itu (bonus).
+ * Jatah menumpuk tiap hari dan dikurangi pengeluaran (tanpa tagihan & pelunasan hutang): saldo positif = boleh belanja
+ * segitu; saldo negatif = sudah dibayar di muka untuk hari-hari ke depan, jadi pembelian sekaligus tidak apa-apa.
  * Sisa jatah (positif) tidak dibawa ke bulan berikutnya; bayar di muka (negatif) dibawa.
+ * Jatah mulai menumpuk dari transaksi pertama (maksimal sejak awal bulan lalu).
  */
-function budgetStatus(b, now, tx) {
+function limitStatus(now, tx, bills, living, resetOn) {
+  if (!(living > 0)) return null;
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const todayS = dateStr(today);
-  const start = new Date(today.getFullYear(), today.getMonth() - 1, 1); // telusuri sejak awal bulan lalu
-  const startS = dateStr(start);
-  const spentTx = tx.filter(t => t.tanggal <= todayS);
-  const byDay = {};
-  spentTx.forEach(t => { if (t.tanggal >= startS) byDay[t.tanggal] = (byDay[t.tanggal] || 0) + t.nominal; });
+  const ctx = { tx, bills, living, resetOn };
+  const base = d => living / daysIn(d.getFullYear(), d.getMonth());
+  const incomeBy = {}, spentBy = {};
+  let first = todayS;
+  tx.forEach(t => {
+    if (t.tanggal > todayS) return;
+    if (t.tanggal < first) first = t.tanggal;
+    if (isEarn(t)) incomeBy[t.tanggal] = (incomeBy[t.tanggal] || 0) + t.nominal;
+    else if (isOut(t) && !FIXED_CATS.includes(t.category)) spentBy[t.tanggal] = (spentBy[t.tanggal] || 0) + t.nominal;
+  });
+  const lookback = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  const startD = dateStr(lookback) > first ? lookback : parseDate(first);
+  const days = {};
   let bal = 0;
-  for (let d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
+  for (let d = new Date(startD); d <= today; d.setDate(d.getDate() + 1)) {
+    const dS = dateStr(d), target = targetOn(d, ctx);
+    const excess = Math.max(0, (incomeBy[dS] || 0) - target);
+    const bonus = excess * BONUS_SHARE;
+    days[dS] = { rate: base(d) + bonus, base: base(d), bonus, excess, target };
     if (d.getDate() === 1) bal = Math.min(0, bal);
-    bal += rateOn(b, d) - (byDay[dateStr(d)] || 0);
+    bal += days[dS].rate - (spentBy[dS] || 0);
   }
   if (Math.abs(bal) < 0.5) bal = 0;
-  const rate = rateOn(b, today);
-  const weekStartS = dateStr(new Date(today.getFullYear(), today.getMonth(), today.getDate() - ((today.getDay() + 6) % 7))); // minggu mulai Senin
-  const todaySpent = byDay[todayS] || 0;
-  const weekSpent = sum(spentTx.filter(t => t.tanggal >= weekStartS));
-  const monthSpent = sum(spentTx.filter(t => t.tanggal.startsWith(monthKey(today))));
-  const monthLimit = b.p === 'bulanan' ? b.a : rate * daysIn(today.getFullYear(), today.getMonth());
-  const weekLimit = rate * 7;
+  const T = days[todayS];
+  const rateFor = d => (days[dateStr(d)] ? days[dateStr(d)].rate : base(d)); // hari yang belum tiba = batas dasar
+  const wk = new Date(today.getFullYear(), today.getMonth(), today.getDate() - ((today.getDay() + 6) % 7)); // minggu mulai Senin
+  let weekLimit = 0, weekSpent = 0, monthLimit = 0, monthSpent = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(wk.getFullYear(), wk.getMonth(), wk.getDate() + i);
+    weekLimit += rateFor(d); weekSpent += spentBy[dateStr(d)] || 0;
+  }
+  const dim = daysIn(today.getFullYear(), today.getMonth());
+  for (let i = 1; i <= dim; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth(), i);
+    monthLimit += rateFor(d); monthSpent += spentBy[dateStr(d)] || 0;
+  }
   const back = new Date(today);
-  if (bal < 0) back.setDate(back.getDate() + Math.floor(-bal / rate) + 1); // hari pertama saldo kembali positif
-  return { b, rate, bal, todaySpent, weekSpent, weekLimit, monthSpent, monthLimit,
-    ratioT: todaySpent / rate, ratioW: weekSpent / weekLimit, ratioM: monthSpent / monthLimit,
-    aheadDays: bal < 0 ? -bal / rate : 0, backDate: back };
+  let ahead = 0;
+  if (bal < 0) { // hari pertama saldo kembali positif (hari depan dihitung dengan batas dasar)
+    ahead = -bal / T.base;
+    for (let b = bal, n = 0; b <= 0 && n < 400; n++) { back.setDate(back.getDate() + 1); b += base(back); }
+  }
+  const todaySpent = spentBy[todayS] || 0;
+  return { rate: T.rate, base: T.base, bonus: T.bonus, excess: T.excess, target: T.target, totalDays: dim, bal,
+    todaySpent, weekSpent, weekLimit, monthSpent, monthLimit,
+    ratioT: todaySpent / T.rate, ratioW: weekSpent / weekLimit, ratioM: monthSpent / monthLimit,
+    aheadDays: ahead, backDate: back };
 }
+const limitFor = (now, tx) => limitStatus(now, tx, state.data.bills, Number(state.data.settings.MonthlyLivingCost) || 0, state.data.settings.ResetMode === 'ON');
 
 /* ================= UI KECIL ================= */
 function toast(msg, kind) {
@@ -315,16 +346,12 @@ function compute() {
   const resetOn = settings.ResetMode === 'ON';
   const deficit = Math.max(0, (targetBulan * (dayNow - 1)) / totalDays - incomeBefore); // kekurangan dibanding jalur linear
 
-  let daily;
-  if (resetOn) daily = sisaTagihan / sisaHari + living / totalDays; // amnesti defisit
-  else daily = Math.max((targetBulan - incomeBefore) / sisaHari, lowerBound);
-  daily = Math.ceil(Math.max(0, daily));
+  const daily = Math.ceil(Math.max(0, targetOn(new Date(y, m, dayNow), { tx, bills, living, resetOn })));
 
   const [rcMonth, rcN] = String(settings.ResetCount || '').split('|');
   const resetCount = rcMonth === prefix ? Number(rcN) || 0 : 0;
 
-  const lim = getLimit();
-  const limitRow = lim ? budgetStatus(lim, now, limitedTx(lim, tx)) : null;
+  const limitRow = limitFor(now, tx);
 
   return {
     totalDays, sisaHari, kas, vault, living, emergMonths, vaultMonths, vaultPct, billRows, totalBills, sisaTagihan, targetBulan, lowerBound,
@@ -429,17 +456,19 @@ function renderBeranda(c) {
 function renderBudgetCard(c) {
   const r = c.limitRow;
   if (!r) {
-    $('#budget-list').innerHTML = '<p class="text-sm text-ink/60">Belum ada batas. Tekan Atur, misalnya Rp 50.000 per hari untuk seluruh pengeluaran. Beli sekaligus untuk beberapa hari tetap aman.</p>';
+    $('#budget-list').innerHTML = '<p class="text-sm text-ink/60">Isi biaya hidup bulanan lewat Atur. Batas pengeluaran harian lalu dihitung otomatis: biaya hidup dibagi jumlah hari bulan itu.</p>';
     return;
   }
   const level = ratio => (ratio >= 1 ? 'bg-rust' : ratio >= 0.8 ? 'bg-saffron' : 'bg-kas');
   const row = (label, spent, limit, ratio, color) => `<div><div class="flex justify-between text-[11px]"><span class="text-ink/60">${label}</span><span class="font-semibold">${rp(spent)} / ${rp(limit)}</span></div>
     <div class="mt-0.5 h-1.5 overflow-hidden rounded-full bg-mist"><div class="h-full rounded-full ${color}" style="width:${Math.min(100, ratio * 100)}%"></div></div></div>`;
   const dateLbl = d => d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+  const bonus = r.bonus > 0 ? ` + bonus ${rp(r.bonus)} (50% dari kelebihan pemasukan ${rp(r.excess)} di atas target ${rp(r.target)})` : '';
   const pace = r.bal >= 0
     ? `<p class="text-xs font-semibold text-kas">Hari ini aman, tersedia ${rp(r.bal)}</p>`
     : `<p class="text-xs font-semibold text-ink">Terbayar di muka ${rp(-r.bal)} <span class="font-normal text-ink/60">(setara ${r.aheadDays.toLocaleString('id-ID', { maximumFractionDigits: 1 })} hari)</span>. Jatah tersedia lagi ${dateLbl(r.backDate)}.</p>`;
-  $('#budget-list').innerHTML = `<div class="flex items-baseline justify-between"><p class="text-xs text-ink/60">Batas ${r.b.p}</p><p class="text-xs font-semibold text-ink/70">${rp(r.rate)}/hari</p></div>${pace}
+  $('#budget-list').innerHTML = `<div class="flex items-baseline justify-between"><p class="text-xs text-ink/60">Batas hari ini</p><p class="text-base font-extrabold">${rp(r.rate)}</p></div>
+    <p class="text-[11px] leading-snug text-ink/60">Dasar ${rp(r.base)} (biaya hidup ÷ ${r.totalDays} hari)${bonus}</p>${pace}
     <div class="space-y-1.5">${row('Hari ini', r.todaySpent, r.rate, r.ratioT, r.bal >= 0 ? 'bg-kas' : 'bg-saffron')}${row('Minggu ini', r.weekSpent, r.weekLimit, r.ratioW, level(r.ratioW))}${row('Bulan ini', r.monthSpent, r.monthLimit, r.ratioM, level(r.ratioM))}</div>`;
 }
 
@@ -504,17 +533,19 @@ function renderStatistik(c) {
     ${cur.noearn > 0 ? `<p class="text-ink/60">Di luar Total In: pelunasan pinjaman ${rp(cur.noearn)} (bukan penghasilan).</p>` : ''}`;
 
   const entries = Object.entries(cur.cats).sort((a, b) => b[1] - a[1]);
-  const lim = getLimit();
-  const limCounted = lim ? sum(limitedTx(lim, txOfMonth(state.statMonth))) : 0;
-  const limMonth = lim ? monthLimitFor(lim, sy, sm - 1) : 0;
-  if (lim) $('#stat-compare').insertAdjacentHTML('beforeend', `<p class="text-ink/70">Batas pengeluaran bulan ini: <b class="${limCounted > limMonth ? 'text-rust' : 'text-ink'}">${rp(limCounted)}</b> dari ${rp(limMonth)} (${Math.round((limCounted / limMonth) * 100)}%)</p>`);
+  const nowD = new Date();
+  const asOf = state.statMonth === monthKey(nowD) ? nowD : new Date(sy, sm, 0); // bulan lalu: dihitung sampai hari terakhir bulan itu
+  const lm = limitFor(asOf, txOfMonth(state.statMonth));
+  const limCounted = lm ? lm.monthSpent : 0;
+  const limMonth = lm ? lm.monthLimit : 0;
+  if (lm) $('#stat-compare').insertAdjacentHTML('beforeend', `<p class="text-ink/70">Batas pengeluaran bulan ini: <b class="${limCounted > limMonth ? 'text-rust' : 'text-ink'}">${rp(limCounted)}</b> dari ${rp(limMonth)} (${Math.round((limCounted / limMonth) * 100)}%)</p>`);
   const insights = [];
   if (net < 0) insights.push('Pengeluaran melebihi pemasukan bulan ini.');
   if (dOut != null && dOut > 10) insights.push(`Pengeluaran naik ${Math.round(dOut)}% dari bulan lalu.`);
   const rises = entries.filter(([k, v]) => (prev.cats[k] || 0) > 0 && v > prev.cats[k] * 1.2).sort((a, b) => (b[1] - prev.cats[b[0]]) - (a[1] - prev.cats[a[0]]));
   if (rises.length) insights.push(`${rises[0][0]} naik ${Math.round(pct(rises[0][1], prev.cats[rises[0][0]]))}% (${rp(rises[0][1] - prev.cats[rises[0][0]])}) dari bulan lalu.`);
   if (entries.length && cur.out > 0 && entries[0][1] / cur.out >= 0.4) insights.push(`${entries[0][0]} menyedot ${Math.round((entries[0][1] / cur.out) * 100)}% dari seluruh pengeluaran.`);
-  if (lim && limCounted > limMonth) insights.push(`Batas pengeluaran bulan ini terlampaui ${rp(limCounted - limMonth)}.`);
+  if (lm && limCounted > limMonth) insights.push(`Batas pengeluaran bulan ini terlampaui ${rp(limCounted - limMonth)}.`);
   const ul = $('#stat-insight');
   ul.classList.toggle('hidden', !insights.length);
   ul.innerHTML = insights.slice(0, 4).map(t => `<li>${esc(t)}</li>`).join('');
@@ -620,7 +651,6 @@ function renderPickers() {
   const note = $('#f-transfer-note');
   note.classList.toggle('hidden', !tr);
   note.textContent = tr ? `Dipindahkan ke ${otherFund(state.fund.f)}` : '';
-  renderBudgetForm();
   if (state.editType) {
     const trE = state.editType === 'Transfer';
     if (!trE) renderChips('e', state.editType);
@@ -629,30 +659,6 @@ function renderPickers() {
     en.textContent = trE ? `Dipindahkan ke ${otherFund(state.fund.e)}` : '';
   }
 }
-function renderBudgetForm() {
-  const labels = { harian: 'Batas per hari', mingguan: 'Batas per minggu', bulanan: 'Batas per bulan' };
-  PERIODS.forEach(p => {
-    const b = $('#bp-' + p), on = state.budgetPeriod === p;
-    b.className = 'rounded-lg py-2 text-xs font-semibold transition ' + (on ? 'bg-ink text-white' : 'text-ink/60');
-    b.setAttribute('aria-pressed', String(on));
-  });
-  const inp = $('#bud-limit');
-  inp.placeholder = labels[state.budgetPeriod];
-  inp.setAttribute('aria-label', labels[state.budgetPeriod]);
-  const a = parseRp(inp.value), eq = $('#b-equiv');
-  if (a > 0) {
-    const d = new Date(), q = budgetEquiv({ a, p: state.budgetPeriod }, daysIn(d.getFullYear(), d.getMonth()));
-    eq.textContent = `Setara ${rp(q.day)}/hari - ${rp(q.week)}/minggu - ${rp(q.month)}/bulan`;
-  } else eq.textContent = 'Beli sekaligus tidak masalah: Beranda menunjukkan berapa hari ke depan yang sudah terbayar di muka.';
-}
-function loadLimitForm() { // isi formulir dari batas tersimpan
-  const l = getLimit();
-  state.budgetPeriod = l ? l.p : 'harian';
-  setMoney($('#bud-limit'), l ? l.a : 0);
-  $('#lim-fixed').checked = !!(l && l.f);
-  renderBudgetForm();
-}
-$('#bud-limit').addEventListener('input', renderBudgetForm);
 const pickedCat = p => (picker[p].adding ? cleanCat($(`#${p}-cat-new`).value) : picker[p].cat);
 const resetPicker = p => { picker[p] = { cat: '', adding: false }; $(`#${p}-cat-new`).value = ''; };
 
@@ -799,10 +805,9 @@ document.addEventListener('click', async e => {
   switch (el.dataset.act) {
     case 'tab': setTab(el.dataset.tab); break;
     case 'type': state.type = el.dataset.type; resetPicker('f'); renderTabs(); break;
-    case 'open-settings': loadLimitForm(); show('#modal-settings'); break;
+    case 'open-settings': show('#modal-settings'); break;
     case 'close-settings': hide('#modal-settings'); break;
     case 'open-tx': openTx(); break;
-    case 'b-period': state.budgetPeriod = el.dataset.p; renderPickers(); break;
     case 'close-tx': hide('#modal-tx'); break;
     case 'open-reset': $('#r-confirm').value = ''; $('#r-backup').checked = true; $('#r-all').checked = false; syncResetBtn(); show('#modal-reset'); break;
     case 'close-reset': hide('#modal-reset'); break;
@@ -842,12 +847,6 @@ document.addEventListener('click', async e => {
     case 'del-bill':
       if (confirm('Hapus tagihan ini?')) await mutate('deleteBill', { id }, 'Tagihan dihapus');
       break;
-    case 'del-limit': {
-      if (!getLimit()) { toast('Belum ada batas yang diatur', 'error'); break; }
-      if ((state.data.meta.serverVersion || 0) < 5) { toast('Server belum diperbarui. Salin Code.gs terbaru lalu deploy versi baru.', 'error'); break; }
-      if (await mutate('saveSetting', { key: 'SpendLimit', value: '' }, 'Batas dihapus')) loadLimitForm();
-      break;
-    }
     case 'settle': openSheet({ mode: 'hutang', id, full: true }); break;
     case 'cicil': openSheet({ mode: 'hutang', id, full: false }); break;
   }
@@ -943,15 +942,6 @@ $('#emerg-form').addEventListener('submit', async e => {
   e.preventDefault();
   await mutate('saveSetting', { key: 'EmergencyMonths', value: Number($('#set-emerg').value) }, 'Target dana darurat disimpan');
 });
-$('#limit-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const a = parseRp($('#bud-limit').value);
-  if (a <= 0) return toast('Nominal batas harus lebih dari 0', 'error');
-  if ((state.data.meta.serverVersion || 0) < 5) return toast('Server belum diperbarui. Salin Code.gs terbaru ke Apps Script lalu deploy versi baru.', 'error');
-  const ok = await mutate('saveSetting', { key: 'SpendLimit', value: JSON.stringify({ a, p: state.budgetPeriod, f: $('#lim-fixed').checked }) }, 'Batas disimpan');
-  if (ok) loadLimitForm();
-});
-
 $('#bill-form').addEventListener('submit', async e => {
   e.preventDefault();
   const ok = await mutate('saveBill', { nama: $('#bill-nama').value.trim(), nominal: parseRp($('#bill-nominal').value), tgl: Number($('#bill-tgl').value) }, 'Tagihan ditambahkan');

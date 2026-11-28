@@ -196,6 +196,7 @@
       <form id="living-form" class="card space-y-2">
         <label class="h-sec block" for="set-living">Biaya hidup per bulan</label>
         <input id="set-living" type="text" inputmode="numeric" autocomplete="off" required placeholder="0" class="field money">
+        <p class="text-[11px] leading-snug text-ink/60">Batas pengeluaran harian dihitung otomatis: biaya hidup ÷ jumlah hari bulan itu. Bila pemasukan hari itu melebihi target, batas bertambah 50% dari kelebihannya.</p>
         <button class="btn w-full" type="submit">Simpan biaya hidup</button>
       </form>
       <form id="emerg-form" class="card space-y-2">
@@ -203,24 +204,6 @@
         <input id="set-emerg" type="number" inputmode="numeric" min="0" max="120" required class="field">
         <button class="btn w-full" type="submit">Simpan target</button>
       </form>
-      <div class="card">
-        <p class="h-sec">Batas pengeluaran</p>
-        <form id="limit-form" class="space-y-2" autocomplete="off">
-          <div class="grid grid-cols-3 gap-1.5 rounded-xl bg-paper p-1" role="group" aria-label="Periode batas">
-            <button type="button" data-act="b-period" data-p="harian" id="bp-harian">Per hari</button>
-            <button type="button" data-act="b-period" data-p="mingguan" id="bp-mingguan">Per minggu</button>
-            <button type="button" data-act="b-period" data-p="bulanan" id="bp-bulanan">Per bulan</button>
-          </div>
-          <input id="bud-limit" type="text" inputmode="numeric" autocomplete="off" required placeholder="Batas per hari" aria-label="Batas" class="field money">
-          <p id="b-equiv" class="text-xs text-ink/60"></p>
-          <label class="flex items-start gap-2 text-sm"><input id="lim-fixed" type="checkbox" class="mt-0.5 h-4 w-4 accent-[#0F766E]"><span>Hitung juga pembayaran tagihan dan hutang</span></label>
-          <div class="grid grid-cols-2 gap-2">
-            <button type="button" data-act="del-limit" class="rounded-xl border border-mist bg-white px-4 py-2.5 text-sm font-semibold">Hapus batas</button>
-            <button class="btn" type="submit">Simpan</button>
-          </div>
-        </form>
-        <p class="mt-1.5 text-[11px] text-ink/60">Berlaku untuk seluruh pengeluaran. Tagihan tetap dan pelunasan hutang tidak dihitung kecuali dicentang.</p>
-      </div>
       <div class="card">
         <p class="h-sec">Tagihan tetap</p>
         <ul id="settings-bills" class="mb-3"></ul>
@@ -380,10 +363,10 @@
       if (f) { f.textContent = 'Terjadi kesalahan: ' + e.message + '. Muat ulang halaman; bila berulang, hapus data situs lalu buka lagi.'; f.classList.remove('hidden'); }
     });
   </script>
-  <script src="app.js?v=10"></script>
+  <script src="app.js?v=11"></script>
   <script>
     // Pastikan app.js yang termuat cocok dengan halaman ini
-    if (window.__DOMPET_V !== '10') {
+    if (window.__DOMPET_V !== '11') {
       var f = document.getElementById('fatal');
       f.textContent = 'File app.js di server belum versi terbaru. Unggah ulang app.js ke GitHub, tunggu 1-2 menit, lalu muat ulang (Ctrl+Shift+R).';
       f.classList.remove('hidden');
